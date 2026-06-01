@@ -12,6 +12,7 @@ const state = {
   mistakes: [],
   suggestions: [],
   members: [],
+  reviewItems: [],
   activeView: "overview"
 };
 
@@ -43,6 +44,8 @@ const refs = {
   mistakeForm: $("mistake-form"),
   mistakeList: $("mistake-list"),
   mistakeCount: $("mistake-count"),
+  reviewForm: $("review-form"),
+  reviewList: $("review-list"),
   searchForm: $("search-form"),
   searchResults: $("search-results"),
   sharedNoteList: $("shared-note-list"),
@@ -159,6 +162,7 @@ function bindEvents() {
   $("refresh-tree-button").addEventListener("click", loadTree);
   $("refresh-notes-button").addEventListener("click", loadNotes);
   $("refresh-mistakes-button").addEventListener("click", loadMistakes);
+  $("refresh-review-button").addEventListener("click", () => loadReview());
   $("mistake-filter-tag").addEventListener("input", renderMistakes);
   $("mistake-filter-mastery").addEventListener("change", renderMistakes);
   $("note-image-button").addEventListener("click", () => uploadImage("note"));
@@ -166,6 +170,10 @@ function bindEvents() {
   refs.nodeForm.addEventListener("submit", createNode);
   refs.noteForm.addEventListener("submit", createNote);
   refs.mistakeForm.addEventListener("submit", createMistake);
+  refs.reviewForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadReview();
+  });
   refs.searchForm.addEventListener("submit", search);
   refs.suggestionForm.addEventListener("submit", createSuggestion);
   refs.courseSettingsForm.addEventListener("submit", updateCourseSettings);
@@ -215,6 +223,7 @@ async function logout() {
   state.mistakes = [];
   state.suggestions = [];
   state.members = [];
+  state.reviewItems = [];
   render();
 }
 
@@ -227,7 +236,7 @@ async function loadCourses() {
       state.courses.find((course) => course.id === state.currentCourse.id) || state.courses[0] || null;
   }
   if (state.currentCourse) {
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   }
 }
 
@@ -255,7 +264,7 @@ async function createCourse() {
     $("course-semester").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((item) => item.id === course.id) || course;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
     showToast("课程已创建");
   } catch (error) {
     showToast(error.message);
@@ -281,7 +290,7 @@ async function joinCourse() {
     $("invite-code").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
     showToast("已加入课程");
   } catch (error) {
     showToast(error.message);
@@ -292,7 +301,7 @@ async function joinCourse() {
 async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
-  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
+  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   render();
 }
 
@@ -363,6 +372,31 @@ async function updateMemberRole(memberId, role) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+async function loadReview() {
+  if (!state.currentCourse) return;
+  const params = new URLSearchParams({
+    mode: $("review-mode").value
+  });
+  const tag = $("review-tag").value.trim();
+  const questionType = $("review-question-type").value.trim();
+  if (tag) params.set("tag", tag);
+  if (questionType) params.set("question_type", questionType);
+  if ($("review-current-node").checked) {
+    if (!state.selectedNode) {
+      showToast("请先选择知识树节点");
+      return;
+    }
+    params.set("node_id", state.selectedNode.id);
+  }
+  try {
+    state.reviewItems = await api(`/api/courses/${state.currentCourse.id}/review?${params.toString()}`);
+  } catch (error) {
+    state.reviewItems = [];
+    showToast(error.message);
+  }
+  renderReview();
 }
 
 async function createNode(event) {
@@ -507,6 +541,19 @@ async function likeNote(noteId) {
     });
     await loadNotes();
     showToast("已点赞");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function favoriteContent(targetType, targetId) {
+  try {
+    await api("/api/reactions", {
+      method: "POST",
+      body: JSON.stringify({ target_type: targetType, target_id: targetId, reaction_type: "favorite" })
+    });
+    await Promise.all([loadNotes(), loadMistakes(), loadReview()]);
+    showToast("已收藏");
   } catch (error) {
     showToast(error.message);
   }
@@ -697,6 +744,7 @@ function render() {
   renderNotes();
   renderSharedNotes();
   renderMistakes();
+  renderReview();
   renderSuggestions();
   renderSettings();
 }
@@ -853,6 +901,7 @@ function renderNoteItem(note) {
       <div class="item-actions">
         <button class="secondary" data-action="publish">发布</button>
         <button class="secondary" data-action="like">点赞</button>
+        <button class="secondary" data-action="favorite">收藏</button>
         <button class="secondary" data-action="comment">评论</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
@@ -871,6 +920,7 @@ function bindNoteActions(container) {
         const action = button.dataset.action;
         if (action === "publish") publishNote(noteId);
         if (action === "like") likeNote(noteId);
+        if (action === "favorite") favoriteContent("note", noteId);
         if (action === "comment") commentNote(noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
@@ -928,6 +978,7 @@ function renderMistakes() {
             <button class="secondary" data-status="todo">待复习</button>
             <button class="secondary" data-status="retry">需再练</button>
             <button class="secondary" data-status="mastered">已掌握</button>
+            <button class="secondary" data-action="favorite">收藏</button>
             <button class="text danger-text" data-action="delete">删除</button>
           </div>
         </article>
@@ -941,6 +992,46 @@ function renderMistakes() {
     });
     item.querySelectorAll("[data-action='delete']").forEach((button) => {
       button.addEventListener("click", () => deleteMistake(id));
+    });
+    item.querySelectorAll("[data-action='favorite']").forEach((button) => {
+      button.addEventListener("click", () => favoriteContent("mistake", id));
+    });
+  });
+}
+
+function renderReview() {
+  if (!state.currentCourse) {
+    refs.reviewList.innerHTML = `<div class="meta">选择课程后显示复习资料</div>`;
+    return;
+  }
+  if (!state.reviewItems || state.reviewItems.length === 0) {
+    refs.reviewList.innerHTML = `<div class="meta">暂无复习资料</div>`;
+    return;
+  }
+  refs.reviewList.innerHTML = state.reviewItems
+    .map(
+      (item) => `
+        <article class="item" data-review-type="${escapeHtml(item.source_type)}" data-review-id="${item.source_id}">
+          <strong class="item-title">${escapeHtml(item.source_type)} #${item.source_id} · ${escapeHtml(item.title)}</strong>
+          <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · ${item.is_favorite ? "已收藏" : "未收藏"}${item.question_type ? ` · ${escapeHtml(item.question_type)}` : ""}${item.mastery_status ? ` · ${escapeHtml(item.mastery_status)}` : ""}</div>
+          ${formatTags(item.tags, item.source_type === "note" ? "green" : "amber")}
+          <div class="item-body">${escapeHtml(item.snippet || "")}</div>
+          <div class="item-actions">
+            <button class="secondary" data-action="open-review">打开位置</button>
+            <button class="secondary" data-action="favorite-review">收藏</button>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+  refs.reviewList.querySelectorAll("[data-review-id]").forEach((item) => {
+    const sourceType = item.dataset.reviewType;
+    const sourceId = Number(item.dataset.reviewId);
+    item.querySelector("[data-action='open-review']").addEventListener("click", () => {
+      openSearchResult(sourceType, sourceId);
+    });
+    item.querySelector("[data-action='favorite-review']").addEventListener("click", () => {
+      favoriteContent(sourceType, sourceId);
     });
   });
 }

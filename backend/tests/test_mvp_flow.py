@@ -177,6 +177,17 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert reaction_res.status_code == 200
 
+        favorite_note_res = await client.post(
+            "/api/reactions",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": note_id,
+                "reaction_type": "favorite",
+            },
+        )
+        assert favorite_note_res.status_code == 200
+
         mistake_res = await client.post(
             "/api/mistakes",
             headers=alice,
@@ -197,6 +208,17 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert mistake_res.status_code == 200
         mistake_id = mistake_res.json()["id"]
+
+        favorite_mistake_res = await client.post(
+            "/api/reactions",
+            headers=alice,
+            json={
+                "target_type": "mistake",
+                "target_id": mistake_id,
+                "reaction_type": "favorite",
+            },
+        )
+        assert favorite_mistake_res.status_code == 200
 
         mastery_res = await client.patch(
             f"/api/mistakes/{mistake_id}/mastery",
@@ -268,6 +290,24 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert missing_author_search_res.status_code == 200
         assert missing_author_search_res.json() == []
+
+        review_res = await client.get(
+            f"/api/courses/{course['id']}/review",
+            headers=alice,
+            params={"mode": "favorites", "node_id": point_id},
+        )
+        assert review_res.status_code == 200
+        review_items = review_res.json()
+        assert {item["source_type"] for item in review_items} == {"note", "mistake"}
+        assert all(item["is_favorite"] for item in review_items)
+
+        review_mistake_res = await client.get(
+            f"/api/courses/{course['id']}/review",
+            headers=alice,
+            params={"tag": "sorting", "question_type": "complexity"},
+        )
+        assert review_mistake_res.status_code == 200
+        assert any(item["source_id"] == mistake_id for item in review_mistake_res.json())
 
         bob_res = await client.post(
             "/api/auth/register",

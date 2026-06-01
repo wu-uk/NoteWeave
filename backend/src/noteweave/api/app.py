@@ -812,6 +812,10 @@ def register_routes(app: FastAPI) -> None:
     ):
         course_id = target_course_id(db, payload.target_type, payload.target_id)
         ensure_member(db, course_id, user["id"])
+        if payload.target_type == "note":
+            ensure_note_access(db, get_note(db, payload.target_id), user["id"])
+        elif payload.target_type == "mistake":
+            ensure_mistake_access(db, get_mistake(db, payload.target_id), user["id"])
         try:
             reaction_id = db.execute(
                 "INSERT INTO reactions (target_type, target_id, reaction_type, user_id, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -848,6 +852,42 @@ def register_routes(app: FastAPI) -> None:
                 (reaction["target_id"],),
             )
         return {"status": "ok"}
+
+    @app.get("/api/courses/{course_id}/review")
+    async def review_materials(
+        course_id: int,
+        node_id: int | None = None,
+        tag: str | None = None,
+        question_type: str | None = None,
+        mode: str = "all",
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        ensure_member(db, course_id, user["id"])
+        if mode not in {"all", "favorites", "recent", "top"}:
+            raise HTTPException(status_code=400, detail="unsupported review mode")
+        if node_id is not None:
+            ensure_node_in_course(db, node_id, course_id)
+
+        items: list[dict[str, Any]] = []
+        for note in db.all("SELECT * FROM notes WHERE course_id = ?", (course_id,)):
+            if not can_access_note(note, user["id"]):
+                continue
+            item = review_note_item(db, note, user["id"])
+            if review_item_matches(item, node_id=node_id, tag=tag, question_type=question_type, mode=mode):
+                items.append(item)
+        for mistake in db.all("SELECT * FROM mistakes WHERE course_id = ?", (course_id,)):
+            if not can_access_mistake(mistake, user["id"]):
+                continue
+            item = review_mistake_item(db, mistake, user["id"])
+            if review_item_matches(item, node_id=node_id, tag=tag, question_type=question_type, mode=mode):
+                items.append(item)
+
+        if mode == "top":
+            items.sort(key=lambda row: (row["like_count"], row["updated_at"]), reverse=True)
+        else:
+            items.sort(key=lambda row: row["updated_at"], reverse=True)
+        return items[:50]
 
     @app.post("/api/suggestions")
     async def create_suggestion(
@@ -1292,8 +1332,12 @@ def serialize_note(row: dict[str, Any], db: Database, include_comments: bool = F
 
 def ensure_note_access(db: Database, note: dict[str, Any], user_id: int) -> None:
     ensure_member(db, int(note["course_id"]), user_id)
-    if note["visibility"] != "shared" and note["author_id"] != user_id:
+    if not can_access_note(note, user_id):
         raise HTTPException(status_code=403, detail="note is private")
+
+
+def can_access_note(note: dict[str, Any], user_id: int) -> bool:
+    return note["visibility"] == "shared" or note["author_id"] == user_id
 
 
 def ensure_note_write(db: Database, note: dict[str, Any], user_id: int) -> None:
@@ -1365,6 +1409,76 @@ def delete_attachments_for_target(db: Database, settings: Settings, target_type:
         db.execute(f"DELETE FROM attachments WHERE {column} = ?", (target_id,))
 
 
+def review_note_item(db: Database, note: dict[str, Any], user_id: int) -> dict[str, Any]:
+    node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (note["node_id"],)) if note["node_id"] else None
+    tags = loads(note["tags"], [])
+    return {
+        "source_type": "note",
+        "source_id": note["id"],
+        "node_id": note["node_id"],
+        "node_path": node["path"] if node else None,
+        "title": note["title"],
+        "snippet": (note["summary"] or note["content_text"] or "")[:180],
+        "tags": tags,
+        "question_type": "",
+        "mastery_status": "",
+        "like_count": note["like_count"],
+        "is_favorite": has_reaction(db, "note", int(note["id"]), user_id, "favorite"),
+        "updated_at": note["updated_at"],
+    }
+
+
+def review_mistake_item(db: Database, mistake: dict[str, Any], user_id: int) -> dict[str, Any]:
+    node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (mistake["node_id"],)) if mistake["node_id"] else None
+    tags = loads(mistake["tags"], [])
+    content = " ".join([mistake["question_content"], mistake["error_reason"], mistake["solution"]]).strip()
+    return {
+        "source_type": "mistake",
+        "source_id": mistake["id"],
+        "node_id": mistake["node_id"],
+        "node_path": node["path"] if node else None,
+        "title": mistake["question_content"][:80],
+        "snippet": content[:180],
+        "tags": tags,
+        "question_type": mistake["question_type"],
+        "mastery_status": mistake["mastery_status"],
+        "like_count": 0,
+        "is_favorite": has_reaction(db, "mistake", int(mistake["id"]), user_id, "favorite"),
+        "updated_at": mistake["updated_at"],
+    }
+
+
+def review_item_matches(
+    item: dict[str, Any],
+    *,
+    node_id: int | None,
+    tag: str | None,
+    question_type: str | None,
+    mode: str,
+) -> bool:
+    if node_id is not None and item["node_id"] != node_id:
+        return False
+    if tag and tag not in item["tags"]:
+        return False
+    if question_type and item["question_type"] != question_type:
+        return False
+    if mode == "favorites" and not item["is_favorite"]:
+        return False
+    return True
+
+
+def has_reaction(db: Database, target_type: str, target_id: int, user_id: int, reaction_type: str) -> bool:
+    return bool(
+        db.one(
+            """
+            SELECT 1 FROM reactions
+            WHERE target_type = ? AND target_id = ? AND user_id = ? AND reaction_type = ?
+            """,
+            (target_type, target_id, user_id, reaction_type),
+        )
+    )
+
+
 def get_mistake(db: Database, mistake_id: int) -> dict[str, Any]:
     row = db.one("SELECT * FROM mistakes WHERE id = ?", (mistake_id,))
     if not row:
@@ -1394,6 +1508,16 @@ def serialize_mistake(row: dict[str, Any], db: Database) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def ensure_mistake_access(db: Database, mistake: dict[str, Any], user_id: int) -> None:
+    ensure_member(db, int(mistake["course_id"]), user_id)
+    if not can_access_mistake(mistake, user_id):
+        raise HTTPException(status_code=403, detail="mistake is private")
+
+
+def can_access_mistake(mistake: dict[str, Any], user_id: int) -> bool:
+    return mistake["visibility"] == "shared" or mistake["author_id"] == user_id
 
 
 def get_comment(db: Database, comment_id: int) -> dict[str, Any]:

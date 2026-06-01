@@ -65,6 +65,7 @@
           <button class="active" data-view="overview">总览</button>
           <button data-view="notes">笔记</button>
           <button data-view="mistakes">错题</button>
+          <button data-view="review">复习</button>
           <button data-view="search">检索</button>
           <button data-view="collab">协作</button>
           <button data-view="settings">设置</button>
@@ -230,6 +231,34 @@
               <button type="submit">检索</button>
             </form>
             <div class="item-list search-results" id="search-results"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-review">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>复习资料</h3>
+                <p>按章节、标签、题型和收藏拉取笔记与错题</p>
+              </div>
+              <button id="refresh-review-button" class="secondary">刷新</button>
+            </div>
+            <form class="search-form" id="review-form">
+              <select id="review-mode">
+                <option value="all">全部资料</option>
+                <option value="favorites">我的收藏</option>
+                <option value="recent">最近更新</option>
+                <option value="top">高赞笔记</option>
+              </select>
+              <input id="review-tag" placeholder="标签" />
+              <input id="review-question-type" placeholder="题型" />
+              <label class="check-line">
+                <input id="review-current-node" type="checkbox" />
+                <span>当前节点</span>
+              </label>
+              <button type="submit">筛选</button>
+            </form>
+            <div class="item-list" id="review-list"></div>
           </section>
         </section>
 
