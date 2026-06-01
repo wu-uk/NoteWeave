@@ -81,6 +81,11 @@
                 </div>
                 <button id="refresh-tree-button" class="secondary">刷新</button>
               </div>
+              <div class="tree-tools">
+                <input id="tree-search" placeholder="搜索章节或知识点" />
+                <button id="expand-tree-button" type="button" class="secondary">展开</button>
+                <button id="collapse-tree-button" type="button" class="secondary">折叠</button>
+              </div>
               <div class="tree" id="knowledge-tree"></div>
             </section>
 
@@ -341,6 +346,7 @@
     </div>
 
     <div class="toast hidden" id="toast"></div>
+    <script src="./tree.js"></script>
     <script src="./render.js"></script>
     <script src="./app.js"></script>
   </body>

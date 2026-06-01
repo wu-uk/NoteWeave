@@ -8,6 +8,7 @@ const state = {
   currentCourse: null,
   tree: null,
   selectedNode: null,
+  expandedNodeIds: new Set(),
   notes: [],
   sharedNotes: [],
   mistakes: [],
@@ -167,6 +168,9 @@ function bindEvents() {
   refs.joinCourseButton.addEventListener("click", joinCourse);
   refs.tabs.addEventListener("click", onTabClick);
   $("refresh-tree-button").addEventListener("click", loadTree);
+  $("tree-search").addEventListener("input", renderTree);
+  $("expand-tree-button").addEventListener("click", expandTree);
+  $("collapse-tree-button").addEventListener("click", collapseTree);
   $("refresh-notes-button").addEventListener("click", loadNotes);
   $("refresh-shared-notes-button").addEventListener("click", loadSharedNotes);
   $("shared-note-sort").addEventListener("change", loadSharedNotes);
@@ -228,6 +232,7 @@ async function logout() {
   state.currentCourse = null;
   state.tree = null;
   state.selectedNode = null;
+  state.expandedNodeIds = new Set();
   state.notes = [];
   state.sharedNotes = [];
   state.mistakes = [];
@@ -311,6 +316,7 @@ async function joinCourse() {
 async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
+  state.expandedNodeIds = new Set();
   await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   render();
 }
@@ -323,6 +329,9 @@ async function loadTree() {
       state.selectedNode = state.tree.tree;
     } else if (state.selectedNode) {
       state.selectedNode = state.tree.nodes.find((node) => node.id === state.selectedNode.id) || state.tree.tree;
+    }
+    if (state.tree.tree) {
+      state.expandedNodeIds.add(state.tree.tree.id);
     }
   } catch (error) {
     showToast(error.message);
@@ -870,31 +879,78 @@ function renderTree() {
     refs.knowledgeTree.innerHTML = `<div class="meta">暂无节点</div>`;
     return;
   }
-  refs.treeMeta.textContent = `${state.tree.nodes.length - 1} 个章节/知识点`;
-  refs.knowledgeTree.innerHTML = renderTreeNode(state.tree.tree);
-  refs.knowledgeTree.querySelectorAll("[data-node-id]").forEach((button) => {
+  const query = $("tree-search").value.trim();
+  const filtered = window.NoteWeaveTree
+    ? window.NoteWeaveTree.filterTreeByQuery(state.tree.tree, query)
+    : { tree: state.tree.tree, matchedIds: [] };
+  const matchedIds = new Set(filtered.matchedIds || []);
+  if (!filtered.tree) {
+    refs.treeMeta.textContent = `${state.tree.nodes.length - 1} 个章节/知识点 · 0 个匹配`;
+    refs.knowledgeTree.innerHTML = `<div class="meta">没有匹配的节点</div>`;
+    return;
+  }
+  const visibleExpandedIds = query && window.NoteWeaveTree
+    ? new Set(window.NoteWeaveTree.collectNodeIds(filtered.tree))
+    : state.expandedNodeIds;
+  refs.treeMeta.textContent = query
+    ? `${state.tree.nodes.length - 1} 个章节/知识点 · ${matchedIds.size} 个匹配`
+    : `${state.tree.nodes.length - 1} 个章节/知识点`;
+  refs.knowledgeTree.innerHTML = renderTreeNode(filtered.tree, visibleExpandedIds, matchedIds);
+  refs.knowledgeTree.querySelectorAll("[data-select-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.selectedNode = state.tree.nodes.find((node) => node.id === Number(button.dataset.nodeId));
+      state.selectedNode = state.tree.nodes.find((node) => node.id === Number(button.dataset.selectNodeId));
       renderTree();
       renderSelectedNode();
     });
   });
+  refs.knowledgeTree.querySelectorAll("[data-toggle-node-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = Number(button.dataset.toggleNodeId);
+      if (state.expandedNodeIds.has(id)) {
+        state.expandedNodeIds.delete(id);
+      } else {
+        state.expandedNodeIds.add(id);
+      }
+      $("tree-search").value = "";
+      renderTree();
+    });
+  });
 }
 
-function renderTreeNode(node) {
+function renderTreeNode(node, expandedIds = state.expandedNodeIds, matchedIds = new Set()) {
   const isActive = state.selectedNode && state.selectedNode.id === node.id;
   const children = node.children || [];
+  const isExpanded = expandedIds.has(node.id);
+  const hasChildren = children.length > 0;
+  const isMatched = matchedIds.has(node.id);
   return `
     <ul>
       <li>
-        <button class="${isActive ? "active" : ""}" data-node-id="${node.id}">
-          <span>${escapeHtml(node.title)}</span>
-          <span class="node-pill">${node.type === "course_root" ? "课程" : node.type === "chapter" ? "章节" : "知识点"} · ${node.note_count || 0}/${node.mistake_count || 0}</span>
-        </button>
-        ${children.map(renderTreeNode).join("")}
+        <div class="tree-node-row">
+          <button class="tree-toggle" data-toggle-node-id="${node.id}" ${hasChildren ? "" : "disabled"} title="${isExpanded ? "折叠" : "展开"}">${hasChildren ? (isExpanded ? "▾" : "▸") : ""}</button>
+          <button class="tree-node ${isActive ? "active" : ""} ${isMatched ? "matched" : ""}" data-select-node-id="${node.id}">
+            <span>${escapeHtml(node.title)}</span>
+            <span class="node-pill">${node.type === "course_root" ? "课程" : node.type === "chapter" ? "章节" : "知识点"} · ${node.note_count || 0}/${node.mistake_count || 0}</span>
+          </button>
+        </div>
+        ${hasChildren && isExpanded ? children.map((child) => renderTreeNode(child, expandedIds, matchedIds)).join("") : ""}
       </li>
     </ul>
   `;
+}
+
+function expandTree() {
+  if (!state.tree || !state.tree.tree || !window.NoteWeaveTree) return;
+  state.expandedNodeIds = new Set(window.NoteWeaveTree.collectNodeIds(state.tree.tree));
+  $("tree-search").value = "";
+  renderTree();
+}
+
+function collapseTree() {
+  if (!state.tree || !state.tree.tree) return;
+  state.expandedNodeIds = new Set([state.tree.tree.id]);
+  $("tree-search").value = "";
+  renderTree();
 }
 
 function renderSelectedNode() {
