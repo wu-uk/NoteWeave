@@ -37,6 +37,17 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         alice_id = alice_res.json()["user"]["id"]
         alice = auth_headers(alice_token)
 
+        profile_update_res = await client.patch(
+            "/api/auth/me",
+            headers=alice,
+            json={"display_name": "Alice Cooper"},
+        )
+        assert profile_update_res.status_code == 200
+        assert profile_update_res.json()["display_name"] == "Alice Cooper"
+        me_res = await client.get("/api/auth/me", headers=alice)
+        assert me_res.status_code == 200
+        assert me_res.json()["display_name"] == "Alice Cooper"
+
         course_res = await client.post(
             "/api/courses",
             headers=alice,
@@ -369,7 +380,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert {item["source_type"] for item in search_results} == {"note", "mistake"}
         assert all("node_path" in item for item in search_results)
         assert all(item["author_id"] == alice_id for item in search_results)
-        assert all(item["author_name"] == "Alice" for item in search_results)
+        assert all(item["author_name"] == "Alice Cooper" for item in search_results)
 
         scoped_search_res = await client.get(
             "/api/search",

@@ -37,6 +37,7 @@ const refs = {
   currentUserRole: $("current-user-role"),
   loginButton: $("login-button"),
   registerButton: $("register-button"),
+  editProfileButton: $("edit-profile-button"),
   logoutButton: $("logout-button"),
   courseList: $("course-list"),
   courseTitle: $("course-title"),
@@ -182,6 +183,7 @@ async function boot() {
 function bindEvents() {
   refs.loginButton.addEventListener("click", () => submitAuth("login"));
   refs.registerButton.addEventListener("click", () => submitAuth("register"));
+  refs.editProfileButton.addEventListener("click", editProfile);
   refs.logoutButton.addEventListener("click", logout);
   refs.createCourseButton.addEventListener("click", createCourse);
   refs.joinCourseButton.addEventListener("click", joinCourse);
@@ -266,6 +268,27 @@ async function logout() {
   state.reviewItems = [];
   resetPaging();
   render();
+}
+
+async function editProfile() {
+  if (!state.user) return;
+  const displayName = window.prompt("新的昵称", state.user.display_name || state.user.username);
+  if (displayName === null) return;
+  const trimmed = displayName.trim();
+  if (!trimmed) {
+    showToast("昵称不能为空");
+    return;
+  }
+  try {
+    state.user = await api("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ display_name: trimmed })
+    });
+    renderAuth();
+    showToast("昵称已更新");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function loadCourses() {

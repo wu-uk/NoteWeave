@@ -31,6 +31,7 @@ from noteweave.api.schemas import (
     RegisterRequest,
     SuggestionCreateRequest,
     SuggestionHandleRequest,
+    UserUpdateRequest,
     ViewCreateRequest,
 )
 from noteweave.core.ai import AIAssistService
@@ -105,6 +106,15 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/auth/me")
     async def me(user: dict[str, Any] = Depends(current_user)):
         return serialize_user(user)
+
+    @app.patch("/api/auth/me")
+    async def update_me(
+        payload: UserUpdateRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        db.execute("UPDATE users SET display_name = ? WHERE id = ?", (payload.display_name, user["id"]))
+        return serialize_user(get_user(db, int(user["id"])))
 
     @app.post("/api/courses")
     async def create_course(

@@ -16,6 +16,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=80)
+
+
 class CourseCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
