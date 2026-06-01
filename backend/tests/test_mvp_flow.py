@@ -184,6 +184,12 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         publish_res = await client.post(f"/api/notes/{note_id}/publish", headers=alice)
         assert publish_res.status_code == 200
         assert publish_res.json()["visibility"] == "shared"
+        versions_res = await client.get(f"/api/notes/{note_id}/versions", headers=alice)
+        assert versions_res.status_code == 200
+        versions = versions_res.json()
+        assert [version["change_reason"] for version in versions[:3]] == ["publish", "manual update", "initial"]
+        assert versions[0]["content_text"] == note_with_image_res.json()["content_text"]
+        assert attachment["markdown"] in versions[0]["content_text"]
 
         popular_note_res = await client.post(
             "/api/notes",

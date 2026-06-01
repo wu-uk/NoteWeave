@@ -742,6 +742,23 @@ async function viewComments(targetType, targetId) {
   }
 }
 
+async function viewNoteVersions(noteId) {
+  try {
+    const versions = await api(`/api/notes/${noteId}/versions`);
+    const text = versions.length
+      ? versions
+          .map((version) => {
+            const date = version.created_at ? version.created_at.slice(0, 19).replace("T", " ") : "";
+            return `#${version.id} ${date} · 用户 ${version.changed_by} · ${version.change_reason}\n${version.title}`;
+          })
+          .join("\n\n")
+      : "暂无版本记录";
+    window.alert(text);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function runAi(noteId, type) {
   try {
     const result = await api(`/api/ai/notes/${noteId}/${type}`, { method: "POST" });
@@ -1226,6 +1243,7 @@ function renderNoteItem(note) {
         <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${note.is_favorite ? "取消收藏" : "收藏"}</button>
         <button class="secondary" data-action="comment">评论</button>
         <button class="secondary" data-action="view-comments">查看评论</button>
+        <button class="secondary" data-action="versions">版本</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
         <button class="text" data-action="suggest-target">设为建议目标</button>
@@ -1246,6 +1264,7 @@ function bindNoteActions(container) {
         if (action === "favorite") toggleFavoriteContent("note", noteId, Number(button.dataset.favoriteReactionId) || null);
         if (action === "comment") commentNote(noteId);
         if (action === "view-comments") viewComments("note", noteId);
+        if (action === "versions") viewNoteVersions(noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
         if (action === "delete") deleteNote(noteId);
