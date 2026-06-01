@@ -198,6 +198,29 @@ def register_routes(app: FastAPI) -> None:
         )
         return [serialize_course(row, db=db, user_id=user["id"]) for row in rows]
 
+    @app.get("/api/courses/search")
+    async def search_courses(
+        q: str = Query(min_length=1, max_length=80),
+        limit: int = Query(default=10, ge=1, le=50),
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        keyword = f"%{q.strip().lower()}%"
+        rows = db.all(
+            """
+            SELECT *
+            FROM courses
+            WHERE lower(name) LIKE ?
+               OR lower(description) LIKE ?
+               OR lower(semester) LIKE ?
+               OR lower(tags) LIKE ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (keyword, keyword, keyword, keyword, limit),
+        )
+        return [serialize_course_public(row, db=db, user_id=user["id"]) for row in rows]
+
     @app.post("/api/courses/join")
     async def join_course_by_code(
         payload: CourseJoinRequest,
@@ -212,6 +235,23 @@ def register_routes(app: FastAPI) -> None:
             db.execute(
                 "INSERT INTO course_members (course_id, user_id, role, joined_at) VALUES (?, ?, 'student', ?)",
                 (course["id"], user["id"], ts),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        return serialize_course(course, db=db, user_id=user["id"])
+
+    @app.post("/api/courses/{course_id}/join-public")
+    async def join_public_course(
+        course_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        course = get_course(db, course_id)
+        ts = now_iso()
+        try:
+            db.execute(
+                "INSERT INTO course_members (course_id, user_id, role, joined_at) VALUES (?, ?, 'student', ?)",
+                (course_id, user["id"], ts),
             )
         except sqlite3.IntegrityError:
             pass
@@ -1380,6 +1420,28 @@ def serialize_course(row: dict[str, Any], db: Database, user_id: int) -> dict[st
             "mistake_count": stats.get("mistake_count", 0) if stats else 0,
             "knowledge_node_count": stats.get("knowledge_node_count", 0) if stats else 0,
         },
+    }
+
+
+def serialize_course_public(row: dict[str, Any], db: Database, user_id: int) -> dict[str, Any]:
+    stats = db.one(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM course_members WHERE course_id = ?) AS member_count,
+          (SELECT role FROM course_members WHERE course_id = ? AND user_id = ?) AS role
+        """,
+        (row["id"], row["id"], user_id),
+    )
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "semester": row["semester"],
+        "tags": loads(row["tags"], []),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "role": stats.get("role") if stats else None,
+        "member_count": stats.get("member_count", 0) if stats else 0,
     }
 
 

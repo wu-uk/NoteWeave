@@ -7,6 +7,7 @@ const state = {
   user: null,
   courses: [],
   currentCourse: null,
+  courseSearchResults: [],
   tree: null,
   selectedNode: null,
   expandedNodeIds: new Set(),
@@ -46,6 +47,8 @@ const refs = {
   courseRole: $("course-role"),
   createCourseButton: $("create-course-button"),
   joinCourseButton: $("join-course-button"),
+  courseSearchButton: $("course-search-button"),
+  courseSearchResults: $("course-search-results"),
   tabs: $("tabs"),
   knowledgeTree: $("knowledge-tree"),
   treeMeta: $("tree-meta"),
@@ -192,6 +195,7 @@ function bindEvents() {
   refs.logoutButton.addEventListener("click", logout);
   refs.createCourseButton.addEventListener("click", createCourse);
   refs.joinCourseButton.addEventListener("click", joinCourse);
+  refs.courseSearchButton.addEventListener("click", searchCourses);
   refs.tabs.addEventListener("click", onTabClick);
   $("refresh-tree-button").addEventListener("click", loadTree);
   $("tree-search").addEventListener("input", renderTree);
@@ -400,6 +404,43 @@ async function joinCourse() {
     showToast(error.message);
   }
   render();
+}
+
+async function searchCourses() {
+  if (!state.token) {
+    showToast("请先登录");
+    return;
+  }
+  const query = $("course-search-query").value.trim();
+  if (!query) {
+    showToast("请输入课程关键词");
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ q: query, limit: "10" });
+    state.courseSearchResults = await api(`/api/courses/search?${params.toString()}`);
+    renderCourseSearchResults();
+  } catch (error) {
+    state.courseSearchResults = [];
+    renderCourseSearchResults();
+    showToast(error.message);
+  }
+}
+
+async function joinCourseFromSearch(courseId) {
+  try {
+    const joined = await api(`/api/courses/${courseId}/join-public`, { method: "POST" });
+    await loadCourses();
+    state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
+    state.courseSearchResults = state.courseSearchResults.map((course) =>
+      course.id === courseId ? { ...course, role: joined.role || "student" } : course
+    );
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
+    render();
+    showToast("已加入课程");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function selectCourse(courseId) {
@@ -963,6 +1004,7 @@ function onTabClick(event) {
 function render() {
   renderAuth();
   renderCourses();
+  renderCourseSearchResults();
   renderCourseHeader();
   renderTabs();
   renderTree();
@@ -1009,6 +1051,30 @@ function renderCourses() {
     .join("");
   refs.courseList.querySelectorAll("[data-course-id]").forEach((row) => {
     row.addEventListener("click", () => selectCourse(Number(row.dataset.courseId)));
+  });
+}
+
+function renderCourseSearchResults() {
+  if (!state.user || !state.courseSearchResults.length) {
+    refs.courseSearchResults.innerHTML = "";
+    return;
+  }
+  refs.courseSearchResults.innerHTML = state.courseSearchResults
+    .map(
+      (course) => `
+        <div class="course-row search-result" data-search-course-id="${course.id}">
+          <strong>${escapeHtml(course.name)}</strong>
+          <span>${escapeHtml(course.semester || "未设置学期")} · ${course.member_count || 0} 人 · ${course.role ? "已加入" : "可加入"}</span>
+          ${course.description ? `<span>${escapeHtml(course.description)}</span>` : ""}
+          <button class="secondary" type="button" data-action="join-search" ${course.role ? "disabled" : ""}>加入课程</button>
+        </div>
+      `
+    )
+    .join("");
+  refs.courseSearchResults.querySelectorAll("[data-search-course-id]").forEach((row) => {
+    const courseId = Number(row.dataset.searchCourseId);
+    const button = row.querySelector("[data-action='join-search']");
+    if (button) button.addEventListener("click", () => joinCourseFromSearch(courseId));
   });
 }
 

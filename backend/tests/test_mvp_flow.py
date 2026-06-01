@@ -596,6 +596,19 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
 
         before_join = await client.get(f"/api/courses/{course['id']}", headers=bob)
         assert before_join.status_code == 403
+        course_search_res = await client.get(
+            "/api/courses/search",
+            headers=bob,
+            params={"q": "Data"},
+        )
+        assert course_search_res.status_code == 200
+        search_results = course_search_res.json()
+        assert search_results[0]["id"] == course["id"]
+        assert "invite_code" not in search_results[0]
+        assert search_results[0]["role"] is None
+        search_join_res = await client.post(f"/api/courses/{course['id']}/join-public", headers=bob)
+        assert search_join_res.status_code == 200
+        assert search_join_res.json()["role"] == "student"
 
         join_res = await client.post(
             "/api/courses/join",
