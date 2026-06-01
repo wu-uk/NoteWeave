@@ -436,6 +436,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         create_note_version(db, note_id, user["id"], "initial")
+        refresh_note_search_chunk(db, note_id)
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes")
@@ -520,6 +521,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         create_note_version(db, note_id, user["id"], "manual update")
+        refresh_note_search_chunk(db, note_id)
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.post("/api/notes/{note_id}/publish")
@@ -535,6 +537,7 @@ def register_routes(app: FastAPI) -> None:
             (now_iso(), note_id),
         )
         create_note_version(db, note_id, user["id"], "publish")
+        refresh_note_search_chunk(db, note_id)
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes/{note_id}/versions")
@@ -563,6 +566,7 @@ def register_routes(app: FastAPI) -> None:
                 ("DELETE FROM comments WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM reactions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM content_views WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM search_chunks WHERE source_type = 'note' AND source_id = ?", (note_id,)),
                 ("DELETE FROM suggestions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM ai_results WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM notes WHERE id = ?", (note_id,)),
@@ -691,6 +695,7 @@ def register_routes(app: FastAPI) -> None:
                 ts,
             ),
         )
+        refresh_mistake_search_chunk(db, mistake_id)
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.get("/api/mistakes")
@@ -760,6 +765,7 @@ def register_routes(app: FastAPI) -> None:
                 mistake_id,
             ),
         )
+        refresh_mistake_search_chunk(db, mistake_id)
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.patch("/api/mistakes/{mistake_id}/mastery")
@@ -775,6 +781,7 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE mistakes SET mastery_status = ?, updated_at = ? WHERE id = ?",
             (payload.mastery_status, now_iso(), mistake_id),
         )
+        refresh_mistake_search_chunk(db, mistake_id)
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.delete("/api/mistakes/{mistake_id}")
@@ -792,6 +799,7 @@ def register_routes(app: FastAPI) -> None:
                 ("DELETE FROM comments WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM reactions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM content_views WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM search_chunks WHERE source_type = 'mistake' AND source_id = ?", (mistake_id,)),
                 ("DELETE FROM suggestions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM ai_results WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM mistakes WHERE id = ?", (mistake_id,)),
@@ -1005,26 +1013,26 @@ def register_routes(app: FastAPI) -> None:
         db: Database = Depends(get_db),
     ):
         ensure_member(db, course_id, user["id"])
+        backfill_course_search_chunks(db, course_id)
         if source_type not in {None, "note", "mistake"}:
             raise HTTPException(status_code=400, detail="unsupported source type")
         query = q.strip().lower()
         results: list[dict[str, Any]] = []
-        if source_type in {None, "note"}:
-            notes = db.all("SELECT * FROM notes WHERE course_id = ?", (course_id,))
-            for note in notes:
-                if note["visibility"] != "shared" and note["author_id"] != user["id"]:
-                    continue
-                item = match_note(db, note, query, node_id, tag, author_id)
-                if item:
-                    results.append(item)
-        if source_type in {None, "mistake"}:
-            mistakes = db.all("SELECT * FROM mistakes WHERE course_id = ?", (course_id,))
-            for mistake in mistakes:
-                if mistake["visibility"] != "shared" and mistake["author_id"] != user["id"]:
-                    continue
-                item = match_mistake(db, mistake, query, node_id, tag, author_id)
-                if item:
-                    results.append(item)
+        clauses = ["course_id = ?"]
+        params: list[Any] = [course_id]
+        if source_type:
+            clauses.append("source_type = ?")
+            params.append(source_type)
+        rows = db.all(
+            f"SELECT * FROM search_chunks WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        )
+        for row in rows:
+            if row["visibility"] != "shared" and row["author_id"] != user["id"]:
+                continue
+            item = match_search_chunk(db, row, query, node_id, tag, author_id)
+            if item:
+                results.append(item)
         results.sort(key=lambda row: (row["score"], row["updated_at"]), reverse=True)
         for row in results[:20]:
             if row.get("node_id"):
@@ -1100,6 +1108,7 @@ def register_routes(app: FastAPI) -> None:
             db.execute("UPDATE notes SET summary = ?, updated_at = ? WHERE id = ?", (payload.get("summary", ""), now_iso(), note["id"]))
         elif result["task_type"] == "tags":
             db.execute("UPDATE notes SET tags = ?, updated_at = ? WHERE id = ?", (dumps(payload.get("tags", [])), now_iso(), note["id"]))
+        refresh_note_search_chunk(db, int(note["id"]))
         db.execute(
             "UPDATE ai_results SET status = 'accepted', accepted_by = ?, accepted_at = ? WHERE id = ?",
             (user["id"], now_iso(), result_id),
@@ -1338,9 +1347,171 @@ def refresh_subtree_paths(db: Database, node_id: int) -> None:
         depth = int(parent["depth"]) + 1
         path = f"{parent['path']} / {node['title']}"
     db.execute("UPDATE knowledge_nodes SET depth = ?, path = ?, updated_at = ? WHERE id = ?", (depth, path, now_iso(), node_id))
+    refresh_search_chunks_for_node(db, node_id)
     children = db.all("SELECT id FROM knowledge_nodes WHERE parent_id = ?", (node_id,))
     for child in children:
         refresh_subtree_paths(db, int(child["id"]))
+
+
+def refresh_search_chunks_for_node(db: Database, node_id: int) -> None:
+    node = db.one("SELECT id, path FROM knowledge_nodes WHERE id = ?", (node_id,))
+    if not node:
+        return
+    db.execute("UPDATE search_chunks SET node_path = ? WHERE node_id = ?", (node["path"], node_id))
+
+
+def refresh_note_search_chunk(db: Database, note_id: int) -> None:
+    note = db.one("SELECT * FROM notes WHERE id = ?", (note_id,))
+    if not note:
+        delete_search_chunk(db, "note", note_id)
+        return
+    tags = loads(note["tags"], [])
+    node_path = search_chunk_node_path(db, note["node_id"])
+    upsert_search_chunk(
+        db,
+        source_type="note",
+        source_id=note_id,
+        course_id=int(note["course_id"]),
+        node_id=note["node_id"],
+        title=note["title"],
+        content=note["content_text"],
+        summary=note["summary"],
+        tags=tags,
+        node_path=node_path,
+        author_id=int(note["author_id"]),
+        visibility=note["visibility"],
+        updated_at=note["updated_at"],
+    )
+
+
+def refresh_mistake_search_chunk(db: Database, mistake_id: int) -> None:
+    mistake = db.one("SELECT * FROM mistakes WHERE id = ?", (mistake_id,))
+    if not mistake:
+        delete_search_chunk(db, "mistake", mistake_id)
+        return
+    content = "\n".join(
+        part
+        for part in [
+            mistake["question_content"],
+            mistake["correct_answer"],
+            mistake["wrong_answer"],
+            mistake["error_reason"],
+            mistake["solution"],
+            mistake["reflection"],
+            mistake["question_type"],
+            mistake["difficulty"],
+            mistake["mastery_status"],
+        ]
+        if part
+    )
+    tags = loads(mistake["tags"], [])
+    node_path = search_chunk_node_path(db, mistake["node_id"])
+    upsert_search_chunk(
+        db,
+        source_type="mistake",
+        source_id=mistake_id,
+        course_id=int(mistake["course_id"]),
+        node_id=mistake["node_id"],
+        title=mistake["question_content"][:80] or "Mistake",
+        content=content,
+        summary=mistake["error_reason"],
+        tags=tags,
+        node_path=node_path,
+        author_id=int(mistake["author_id"]),
+        visibility=mistake["visibility"],
+        updated_at=mistake["updated_at"],
+    )
+
+
+def search_chunk_node_path(db: Database, node_id: int | None) -> str:
+    if node_id is None:
+        return ""
+    node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (node_id,))
+    return str(node["path"]) if node else ""
+
+
+def upsert_search_chunk(
+    db: Database,
+    *,
+    source_type: str,
+    source_id: int,
+    course_id: int,
+    node_id: int | None,
+    title: str,
+    content: str,
+    summary: str,
+    tags: list[str],
+    node_path: str,
+    author_id: int,
+    visibility: str,
+    updated_at: str,
+) -> None:
+    tags_text = "\n".join(str(tag) for tag in tags if str(tag).strip())
+    db.execute(
+        """
+        INSERT INTO search_chunks
+          (course_id, node_id, source_type, source_id, title, content, summary, tags_text, node_path, author_id, visibility, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_type, source_id) DO UPDATE SET
+          course_id = excluded.course_id,
+          node_id = excluded.node_id,
+          title = excluded.title,
+          content = excluded.content,
+          summary = excluded.summary,
+          tags_text = excluded.tags_text,
+          node_path = excluded.node_path,
+          author_id = excluded.author_id,
+          visibility = excluded.visibility,
+          updated_at = excluded.updated_at
+        """,
+        (
+            course_id,
+            node_id,
+            source_type,
+            source_id,
+            title,
+            content,
+            summary,
+            tags_text,
+            node_path,
+            author_id,
+            visibility,
+            updated_at,
+        ),
+    )
+
+
+def delete_search_chunk(db: Database, source_type: str, source_id: int) -> None:
+    db.execute("DELETE FROM search_chunks WHERE source_type = ? AND source_id = ?", (source_type, source_id))
+
+
+def backfill_course_search_chunks(db: Database, course_id: int) -> None:
+    notes = db.all(
+        """
+        SELECT id FROM notes n
+        WHERE n.course_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM search_chunks sc
+            WHERE sc.source_type = 'note' AND sc.source_id = n.id
+          )
+        """,
+        (course_id,),
+    )
+    mistakes = db.all(
+        """
+        SELECT id FROM mistakes m
+        WHERE m.course_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM search_chunks sc
+            WHERE sc.source_type = 'mistake' AND sc.source_id = m.id
+          )
+        """,
+        (course_id,),
+    )
+    for note in notes:
+        refresh_note_search_chunk(db, int(note["id"]))
+    for mistake in mistakes:
+        refresh_mistake_search_chunk(db, int(mistake["id"]))
 
 
 def get_note(db: Database, note_id: int) -> dict[str, Any]:
@@ -1673,6 +1844,52 @@ def target_course_id(db: Database, target_type: str, target_id: int) -> int:
         suggestion = get_suggestion(db, target_id)
         return target_course_id(db, suggestion["target_type"], int(suggestion["target_id"]))
     raise HTTPException(status_code=400, detail="unsupported target type")
+
+
+def match_search_chunk(
+    db: Database,
+    chunk: dict[str, Any],
+    query: str,
+    node_id: int | None,
+    tag: str | None,
+    author_id: int | None,
+) -> dict[str, Any] | None:
+    if node_id is not None and chunk["node_id"] != node_id:
+        return None
+    if author_id is not None and chunk["author_id"] != author_id:
+        return None
+    tags = [item for item in (chunk["tags_text"] or "").splitlines() if item]
+    if tag and tag not in tags:
+        return None
+    fields = {
+        "title": chunk["title"],
+        "content": chunk["content"],
+        "summary": chunk["summary"],
+        "tag": " ".join(tags),
+        "node": chunk["node_path"],
+    }
+    matched = [name for name, value in fields.items() if query in (value or "").lower()]
+    if not matched:
+        return None
+    score = sum({"title": 5, "tag": 4, "node": 3, "summary": 2, "content": 1}[name] for name in matched)
+    if chunk["source_type"] == "note":
+        note = db.one("SELECT like_count FROM notes WHERE id = ?", (chunk["source_id"],))
+        if note:
+            score += min(int(note["like_count"]), 5)
+    author = get_user(db, int(chunk["author_id"]))
+    return {
+        "source_type": chunk["source_type"],
+        "source_id": chunk["source_id"],
+        "node_id": chunk["node_id"],
+        "author_id": chunk["author_id"],
+        "author_name": author["display_name"],
+        "title": chunk["title"],
+        "snippet": make_snippet(chunk["content"] or chunk["summary"] or chunk["title"], query),
+        "node_path": chunk["node_path"] or None,
+        "matched_fields": matched,
+        "score": score,
+        "updated_at": chunk["updated_at"],
+    }
 
 
 def match_note(

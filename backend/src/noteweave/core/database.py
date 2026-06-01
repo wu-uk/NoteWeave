@@ -227,6 +227,26 @@ CREATE TABLE IF NOT EXISTS content_views (
   UNIQUE(target_type, target_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS search_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  node_id INTEGER REFERENCES knowledge_nodes(id) ON DELETE SET NULL,
+  source_type TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  tags_text TEXT NOT NULL DEFAULT '',
+  node_path TEXT NOT NULL DEFAULT '',
+  author_id INTEGER NOT NULL REFERENCES users(id),
+  visibility TEXT NOT NULL DEFAULT 'private',
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_type, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_chunks_course ON search_chunks(course_id);
+CREATE INDEX IF NOT EXISTS idx_search_chunks_source ON search_chunks(source_type, source_id);
+
 CREATE TABLE IF NOT EXISTS suggestions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   target_type TEXT NOT NULL,

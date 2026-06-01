@@ -97,6 +97,13 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert note_res.status_code == 200
         note_id = note_res.json()["id"]
+        note_chunk = app.state.db.one(
+            "SELECT * FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
+            (note_id,),
+        )
+        assert note_chunk is not None
+        assert note_chunk["content"] == "Quick sort uses partitioning. Average complexity is O(n log n)."
+        assert note_chunk["tags_text"].splitlines() == ["sorting", "quick-sort"]
 
         image_bytes = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -157,19 +164,31 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert summary_res.status_code == 200
         summary_id = summary_res.json()["id"]
         assert summary_res.json()["result"]["source"] == "fallback"
+        summary_text = summary_res.json()["result"]["summary"]
         accept_summary_res = await client.post(
             f"/api/ai/results/{summary_id}/accept", headers=alice
         )
         assert accept_summary_res.status_code == 200
         assert accept_summary_res.json()["status"] == "accepted"
+        summary_chunk = app.state.db.one(
+            "SELECT * FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
+            (note_id,),
+        )
+        assert summary_chunk["summary"] == summary_text
 
         tags_res = await client.post(f"/api/ai/notes/{note_id}/tags", headers=alice)
         assert tags_res.status_code == 200
         assert tags_res.json()["result"]["source"] == "fallback"
+        extracted_tags = tags_res.json()["result"]["tags"]
         accept_tags_res = await client.post(
             f"/api/ai/results/{tags_res.json()['id']}/accept", headers=alice
         )
         assert accept_tags_res.status_code == 200
+        tags_chunk = app.state.db.one(
+            "SELECT * FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
+            (note_id,),
+        )
+        assert tags_chunk["tags_text"].splitlines() == extracted_tags
 
         comment_res = await client.post(
             "/api/comments",
@@ -255,6 +274,12 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert mistake_res.status_code == 200
         mistake_id = mistake_res.json()["id"]
+        mistake_chunk = app.state.db.one(
+            "SELECT * FROM search_chunks WHERE source_type = 'mistake' AND source_id = ?",
+            (mistake_id,),
+        )
+        assert mistake_chunk is not None
+        assert "Ignored unbalanced partitions." in mistake_chunk["content"]
 
         favorite_mistake_res = await client.post(
             "/api/reactions",
@@ -523,6 +548,13 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         temp_note_id = temp_note_res.json()["id"]
         delete_temp_note_res = await client.delete(f"/api/notes/{temp_note_id}", headers=alice)
         assert delete_temp_note_res.status_code == 200
+        assert (
+            app.state.db.one(
+                "SELECT id FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
+                (temp_note_id,),
+            )
+            is None
+        )
         deleted_note_res = await client.get(f"/api/notes/{temp_note_id}", headers=alice)
         assert deleted_note_res.status_code == 404
 
@@ -542,6 +574,13 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert bob_delete_mistake_res.status_code == 403
         delete_temp_mistake_res = await client.delete(f"/api/mistakes/{temp_mistake_id}", headers=alice)
         assert delete_temp_mistake_res.status_code == 200
+        assert (
+            app.state.db.one(
+                "SELECT id FROM search_chunks WHERE source_type = 'mistake' AND source_id = ?",
+                (temp_mistake_id,),
+            )
+            is None
+        )
         mistakes_after_delete_res = await client.get(
             "/api/mistakes",
             headers=alice,
