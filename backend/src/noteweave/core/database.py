@@ -184,6 +184,20 @@ CREATE TABLE IF NOT EXISTS mistakes (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+  mistake_id INTEGER REFERENCES mistakes(id) ON DELETE SET NULL,
+  file_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL UNIQUE,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  url_path TEXT NOT NULL,
+  uploaded_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   target_type TEXT NOT NULL,
@@ -230,4 +244,3 @@ CREATE TABLE IF NOT EXISTS ai_results (
   created_at TEXT NOT NULL
 );
 """
-

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -13,7 +15,12 @@ def auth_headers(token: str) -> dict[str, str]:
 
 @pytest.mark.anyio
 async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
-    app = create_app(Settings(database_path=str(tmp_path / "noteweave.sqlite3")))
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -89,6 +96,41 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert note_res.status_code == 200
         note_id = note_res.json()["id"]
+
+        image_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+        attachment_res = await client.post(
+            "/api/attachments",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "note_id": note_id,
+                "file_name": "partition.png",
+                "content_type": "image/png",
+                "data_base64": base64.b64encode(image_bytes).decode("ascii"),
+            },
+        )
+        assert attachment_res.status_code == 200
+        attachment = attachment_res.json()
+        assert attachment["size_bytes"] == len(image_bytes)
+        assert attachment["markdown"].startswith("![partition.png](/api/files/")
+
+        file_res = await client.get(attachment["url_path"])
+        assert file_res.status_code == 200
+        assert file_res.headers["content-type"] == "image/png"
+        assert file_res.content == image_bytes
+
+        note_with_image_res = await client.patch(
+            f"/api/notes/{note_id}",
+            headers=alice,
+            json={
+                "content_text": f"{note_res.json()['content_text']}\n\n{attachment['markdown']}",
+                "content_json": {"type": "markdown", "attachments": [attachment["id"]]},
+            },
+        )
+        assert note_with_image_res.status_code == 200
+        assert attachment["markdown"] in note_with_image_res.json()["content_text"]
 
         publish_res = await client.post(f"/api/notes/{note_id}/publish", headers=alice)
         assert publish_res.status_code == 200

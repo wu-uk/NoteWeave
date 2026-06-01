@@ -183,7 +183,8 @@ textarea:focus {
 .button-row,
 .join-row,
 .row,
-.filters {
+.filters,
+.upload-row {
   display: flex;
   gap: 10px;
 }
@@ -191,8 +192,30 @@ textarea:focus {
 .button-row > *,
 .join-row > *,
 .row > *,
-.filters > * {
+.filters > *,
+.upload-row > * {
   flex: 1;
+}
+
+.upload-row button {
+  flex: 0 0 auto;
+}
+
+.image-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.image-preview img {
+  width: 72px;
+  height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  object-fit: cover;
+  background: #fff;
 }
 
 .user-bar {

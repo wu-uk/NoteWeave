@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import secrets
 import sqlite3
+from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from noteweave.api.schemas import (
+    AttachmentCreateRequest,
     CommentCreateRequest,
     CourseCreateRequest,
     CourseJoinRequest,
@@ -34,6 +38,7 @@ from noteweave.core.settings import Settings
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.load()
+    Path(settings.file_storage_dir).mkdir(parents=True, exist_ok=True)
     app = FastAPI(title=settings.app_name)
     app.state.settings = settings
     app.state.db = Database(settings.database_path)
@@ -493,6 +498,92 @@ def register_routes(app: FastAPI) -> None:
         ensure_note_access(db, note, user["id"])
         rows = db.all("SELECT * FROM note_versions WHERE note_id = ? ORDER BY id DESC", (note_id,))
         return [serialize_version(row) for row in rows]
+
+    @app.post("/api/attachments")
+    async def create_attachment(
+        payload: AttachmentCreateRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        ensure_member(db, payload.course_id, user["id"])
+        if payload.note_id is not None:
+            note = get_note(db, payload.note_id)
+            ensure_note_write(db, note, user["id"])
+            if int(note["course_id"]) != payload.course_id:
+                raise HTTPException(status_code=400, detail="note is not in course")
+        if payload.mistake_id is not None:
+            mistake = get_mistake(db, payload.mistake_id)
+            ensure_owner_or_maintainer(db, int(mistake["course_id"]), int(mistake["author_id"]), user["id"])
+            if int(mistake["course_id"]) != payload.course_id:
+                raise HTTPException(status_code=400, detail="mistake is not in course")
+        if not payload.content_type.startswith("image/"):
+            raise HTTPException(status_code=415, detail="only image uploads are supported")
+
+        try:
+            file_bytes = base64.b64decode(payload.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail="invalid base64 data")
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="empty file")
+        if len(file_bytes) > settings.max_upload_bytes:
+            raise HTTPException(status_code=413, detail="file is too large")
+
+        raw_name = Path(payload.file_name).name or "image"
+        safe_name = "".join(
+            char if char.isascii() and (char.isalnum() or char in ".-_") else "_"
+            for char in raw_name
+        ).strip("._")
+        if not safe_name:
+            safe_name = "image"
+        extension = Path(safe_name).suffix.lower()
+        if len(extension) > 12:
+            extension = ""
+        stored_name = f"{secrets.token_urlsafe(18)}{extension}"
+        storage_dir = Path(settings.file_storage_dir)
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        target = storage_dir / stored_name
+        target.write_bytes(file_bytes)
+
+        url_path = f"/api/files/{stored_name}"
+        attachment_id = db.execute(
+            """
+            INSERT INTO attachments
+              (course_id, note_id, mistake_id, file_name, stored_name, content_type, size_bytes, url_path, uploaded_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.course_id,
+                payload.note_id,
+                payload.mistake_id,
+                safe_name,
+                stored_name,
+                payload.content_type,
+                len(file_bytes),
+                url_path,
+                user["id"],
+                now_iso(),
+            ),
+        )
+        return {
+            **serialize_attachment(get_attachment(db, attachment_id)),
+            "markdown": f"![{safe_name}]({url_path})",
+        }
+
+    @app.get("/api/files/{stored_name}")
+    async def get_file(
+        stored_name: str,
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        attachment = db.one("SELECT * FROM attachments WHERE stored_name = ?", (stored_name,))
+        if not attachment:
+            raise HTTPException(status_code=404, detail="file not found")
+        path = Path(settings.file_storage_dir) / attachment["stored_name"]
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        headers = {"Content-Disposition": f'inline; filename="{attachment["file_name"]}"'}
+        return Response(path.read_bytes(), media_type=attachment["content_type"], headers=headers)
 
     @app.post("/api/mistakes")
     async def create_mistake(
@@ -1144,6 +1235,28 @@ def serialize_version(row: dict[str, Any]) -> dict[str, Any]:
         "content_text": row["content_text"],
         "changed_by": row["changed_by"],
         "change_reason": row["change_reason"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_attachment(db: Database, attachment_id: int) -> dict[str, Any]:
+    row = db.one("SELECT * FROM attachments WHERE id = ?", (attachment_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return row
+
+
+def serialize_attachment(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "course_id": row["course_id"],
+        "note_id": row["note_id"],
+        "mistake_id": row["mistake_id"],
+        "file_name": row["file_name"],
+        "content_type": row["content_type"],
+        "size_bytes": row["size_bytes"],
+        "url_path": row["url_path"],
+        "uploaded_by": row["uploaded_by"],
         "created_at": row["created_at"],
     }
 

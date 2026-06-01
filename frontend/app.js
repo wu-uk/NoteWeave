@@ -158,6 +158,8 @@ function bindEvents() {
   $("refresh-mistakes-button").addEventListener("click", loadMistakes);
   $("mistake-filter-tag").addEventListener("input", renderMistakes);
   $("mistake-filter-mastery").addEventListener("change", renderMistakes);
+  $("note-image-button").addEventListener("click", () => uploadImage("note"));
+  $("mistake-image-button").addEventListener("click", () => uploadImage("mistake"));
   refs.nodeForm.addEventListener("submit", createNode);
   refs.noteForm.addEventListener("submit", createNote);
   refs.mistakeForm.addEventListener("submit", createMistake);
@@ -373,6 +375,59 @@ async function createNote(event) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+async function uploadImage(target) {
+  if (!requireCourse()) return;
+  const fileInput = $(target === "note" ? "note-image" : "mistake-image");
+  const textInput = $(target === "note" ? "note-content" : "mistake-question");
+  const preview = $(target === "note" ? "note-image-preview" : "mistake-image-preview");
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    showToast("请先选择图片");
+    return;
+  }
+  if (!file.type.startsWith("image/")) {
+    showToast("只能上传图片");
+    return;
+  }
+  try {
+    const dataBase64 = await readFileAsBase64(file);
+    const attachment = await api("/api/attachments", {
+      method: "POST",
+      body: JSON.stringify({
+        course_id: state.currentCourse.id,
+        file_name: file.name,
+        content_type: file.type || "image/png",
+        data_base64: dataBase64
+      })
+    });
+    appendMarkdown(textInput, attachment.markdown);
+    preview.classList.remove("hidden");
+    preview.innerHTML = `<img src="${API_BASE}${attachment.url_path}" alt="${escapeHtml(attachment.file_name)}" /><span>${escapeHtml(attachment.file_name)}</span>`;
+    fileInput.value = "";
+    showToast("图片已插入正文");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",", 2)[1] : result);
+    };
+    reader.onerror = () => reject(new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function appendMarkdown(textInput, markdown) {
+  const prefix = textInput.value.trimEnd();
+  textInput.value = prefix ? `${prefix}\n\n${markdown}\n` : `${markdown}\n`;
+  textInput.focus();
 }
 
 async function publishNote(noteId) {

@@ -105,6 +105,15 @@ class MistakeUpdateRequest(BaseModel):
     visibility: Literal["private", "shared"] | None = None
 
 
+class AttachmentCreateRequest(BaseModel):
+    course_id: int
+    note_id: int | None = None
+    mistake_id: int | None = None
+    file_name: str = Field(min_length=1, max_length=180)
+    content_type: str = Field(min_length=1, max_length=120)
+    data_base64: str = Field(min_length=1)
+
+
 class MasteryRequest(BaseModel):
     mastery_status: Literal["todo", "mastered", "retry"]
 
@@ -130,4 +139,3 @@ class SuggestionCreateRequest(BaseModel):
 
 class SuggestionHandleRequest(BaseModel):
     status: Literal["accepted", "rejected", "discussed"]
-

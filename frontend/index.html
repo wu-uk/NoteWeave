@@ -117,6 +117,11 @@
               <form class="stack-form" id="note-form">
                 <input id="note-title" placeholder="标题" />
                 <textarea id="note-content" class="large" placeholder="正文，支持 Markdown / 公式 / 代码文本"></textarea>
+                <div class="upload-row">
+                  <input id="note-image" type="file" accept="image/*" />
+                  <button id="note-image-button" type="button" class="secondary">插入图片</button>
+                </div>
+                <div id="note-image-preview" class="image-preview hidden"></div>
                 <input id="note-tags" placeholder="标签，用逗号分隔" />
                 <div class="row">
                   <select id="note-visibility">
@@ -156,6 +161,11 @@
               </div>
               <form class="stack-form" id="mistake-form">
                 <textarea id="mistake-question" placeholder="题目内容"></textarea>
+                <div class="upload-row">
+                  <input id="mistake-image" type="file" accept="image/*" />
+                  <button id="mistake-image-button" type="button" class="secondary">插入图片</button>
+                </div>
+                <div id="mistake-image-preview" class="image-preview hidden"></div>
                 <input id="mistake-correct" placeholder="正确答案" />
                 <input id="mistake-wrong" placeholder="错误答案" />
                 <textarea id="mistake-reason" placeholder="错误原因"></textarea>
