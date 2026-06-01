@@ -435,7 +435,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         create_note_version(db, note_id, user["id"], "initial")
-        return serialize_note(get_note(db, note_id), db)
+        return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes")
     async def list_notes(
@@ -460,7 +460,7 @@ def register_routes(app: FastAPI) -> None:
             f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC",
             tuple(params),
         )
-        return [serialize_note(row, db) for row in rows]
+        return [serialize_note(row, db, user_id=user["id"]) for row in rows]
 
     @app.get("/api/notes/{note_id}")
     async def note_detail(
@@ -470,7 +470,7 @@ def register_routes(app: FastAPI) -> None:
     ):
         note = get_note(db, note_id)
         ensure_note_access(db, note, user["id"])
-        return serialize_note(note, db, include_comments=True)
+        return serialize_note(note, db, include_comments=True, user_id=user["id"])
 
     @app.patch("/api/notes/{note_id}")
     async def update_note(
@@ -511,7 +511,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         create_note_version(db, note_id, user["id"], "manual update")
-        return serialize_note(get_note(db, note_id), db)
+        return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.post("/api/notes/{note_id}/publish")
     async def publish_note(
@@ -526,7 +526,7 @@ def register_routes(app: FastAPI) -> None:
             (now_iso(), note_id),
         )
         create_note_version(db, note_id, user["id"], "publish")
-        return serialize_note(get_note(db, note_id), db)
+        return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes/{note_id}/versions")
     async def note_versions(
@@ -681,7 +681,7 @@ def register_routes(app: FastAPI) -> None:
                 ts,
             ),
         )
-        return serialize_mistake(get_mistake(db, mistake_id), db)
+        return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.get("/api/mistakes")
     async def list_mistakes(
@@ -708,7 +708,7 @@ def register_routes(app: FastAPI) -> None:
                 continue
             if mastery_status and row["mastery_status"] != mastery_status:
                 continue
-            result.append(serialize_mistake(row, db))
+            result.append(serialize_mistake(row, db, user_id=user["id"]))
         return result
 
     @app.patch("/api/mistakes/{mistake_id}")
@@ -750,7 +750,7 @@ def register_routes(app: FastAPI) -> None:
                 mistake_id,
             ),
         )
-        return serialize_mistake(get_mistake(db, mistake_id), db)
+        return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.patch("/api/mistakes/{mistake_id}/mastery")
     async def update_mastery(
@@ -765,7 +765,7 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE mistakes SET mastery_status = ?, updated_at = ? WHERE id = ?",
             (payload.mastery_status, now_iso(), mistake_id),
         )
-        return serialize_mistake(get_mistake(db, mistake_id), db)
+        return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.delete("/api/mistakes/{mistake_id}")
     async def delete_mistake(
@@ -1245,11 +1245,11 @@ def serialize_node(
             note_filter = "(visibility = 'shared' OR author_id = ?)"
             mistake_filter = "(visibility = 'shared' OR author_id = ?)"
             data["notes"] = [
-                serialize_note(n, db)
+                serialize_note(n, db, user_id=user_id)
                 for n in db.all(f"SELECT * FROM notes WHERE node_id = ? AND {note_filter}", (row["id"], user_id))
             ]
             data["mistakes"] = [
-                serialize_mistake(m, db)
+                serialize_mistake(m, db, user_id=user_id)
                 for m in db.all(f"SELECT * FROM mistakes WHERE node_id = ? AND {mistake_filter}", (row["id"], user_id))
             ]
         else:
@@ -1300,8 +1300,14 @@ def get_note(db: Database, note_id: int) -> dict[str, Any]:
     return row
 
 
-def serialize_note(row: dict[str, Any], db: Database, include_comments: bool = False) -> dict[str, Any]:
+def serialize_note(
+    row: dict[str, Any],
+    db: Database,
+    include_comments: bool = False,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     node = db.one("SELECT id, title, path FROM knowledge_nodes WHERE id = ?", (row["node_id"],)) if row["node_id"] else None
+    favorite_reaction_id = reaction_id(db, "note", int(row["id"]), user_id, "favorite") if user_id is not None else None
     data = {
         "id": row["id"],
         "course_id": row["course_id"],
@@ -1318,6 +1324,8 @@ def serialize_note(row: dict[str, Any], db: Database, include_comments: bool = F
         "author_id": row["author_id"],
         "like_count": row["like_count"],
         "comment_count": row["comment_count"],
+        "is_favorite": favorite_reaction_id is not None,
+        "favorite_reaction_id": favorite_reaction_id,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -1412,6 +1420,7 @@ def delete_attachments_for_target(db: Database, settings: Settings, target_type:
 def review_note_item(db: Database, note: dict[str, Any], user_id: int) -> dict[str, Any]:
     node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (note["node_id"],)) if note["node_id"] else None
     tags = loads(note["tags"], [])
+    favorite_reaction_id = reaction_id(db, "note", int(note["id"]), user_id, "favorite")
     return {
         "source_type": "note",
         "source_id": note["id"],
@@ -1423,7 +1432,8 @@ def review_note_item(db: Database, note: dict[str, Any], user_id: int) -> dict[s
         "question_type": "",
         "mastery_status": "",
         "like_count": note["like_count"],
-        "is_favorite": has_reaction(db, "note", int(note["id"]), user_id, "favorite"),
+        "is_favorite": favorite_reaction_id is not None,
+        "favorite_reaction_id": favorite_reaction_id,
         "updated_at": note["updated_at"],
     }
 
@@ -1432,6 +1442,7 @@ def review_mistake_item(db: Database, mistake: dict[str, Any], user_id: int) -> 
     node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (mistake["node_id"],)) if mistake["node_id"] else None
     tags = loads(mistake["tags"], [])
     content = " ".join([mistake["question_content"], mistake["error_reason"], mistake["solution"]]).strip()
+    favorite_reaction_id = reaction_id(db, "mistake", int(mistake["id"]), user_id, "favorite")
     return {
         "source_type": "mistake",
         "source_id": mistake["id"],
@@ -1443,7 +1454,8 @@ def review_mistake_item(db: Database, mistake: dict[str, Any], user_id: int) -> 
         "question_type": mistake["question_type"],
         "mastery_status": mistake["mastery_status"],
         "like_count": 0,
-        "is_favorite": has_reaction(db, "mistake", int(mistake["id"]), user_id, "favorite"),
+        "is_favorite": favorite_reaction_id is not None,
+        "favorite_reaction_id": favorite_reaction_id,
         "updated_at": mistake["updated_at"],
     }
 
@@ -1467,16 +1479,17 @@ def review_item_matches(
     return True
 
 
-def has_reaction(db: Database, target_type: str, target_id: int, user_id: int, reaction_type: str) -> bool:
-    return bool(
-        db.one(
-            """
-            SELECT 1 FROM reactions
-            WHERE target_type = ? AND target_id = ? AND user_id = ? AND reaction_type = ?
-            """,
-            (target_type, target_id, user_id, reaction_type),
-        )
+def reaction_id(db: Database, target_type: str, target_id: int, user_id: int | None, reaction_type: str) -> int | None:
+    if user_id is None:
+        return None
+    row = db.one(
+        """
+        SELECT id FROM reactions
+        WHERE target_type = ? AND target_id = ? AND user_id = ? AND reaction_type = ?
+        """,
+        (target_type, target_id, user_id, reaction_type),
     )
+    return int(row["id"]) if row else None
 
 
 def get_mistake(db: Database, mistake_id: int) -> dict[str, Any]:
@@ -1486,8 +1499,9 @@ def get_mistake(db: Database, mistake_id: int) -> dict[str, Any]:
     return row
 
 
-def serialize_mistake(row: dict[str, Any], db: Database) -> dict[str, Any]:
+def serialize_mistake(row: dict[str, Any], db: Database, user_id: int | None = None) -> dict[str, Any]:
     node = db.one("SELECT id, title, path FROM knowledge_nodes WHERE id = ?", (row["node_id"],)) if row["node_id"] else None
+    favorite_reaction_id = reaction_id(db, "mistake", int(row["id"]), user_id, "favorite") if user_id is not None else None
     return {
         "id": row["id"],
         "course_id": row["course_id"],
@@ -1505,6 +1519,8 @@ def serialize_mistake(row: dict[str, Any], db: Database) -> dict[str, Any]:
         "tags": loads(row["tags"], []),
         "visibility": row["visibility"],
         "author_id": row["author_id"],
+        "is_favorite": favorite_reaction_id is not None,
+        "favorite_reaction_id": favorite_reaction_id,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

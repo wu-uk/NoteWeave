@@ -546,14 +546,18 @@ async function likeNote(noteId) {
   }
 }
 
-async function favoriteContent(targetType, targetId) {
+async function toggleFavoriteContent(targetType, targetId, favoriteReactionId) {
   try {
-    await api("/api/reactions", {
-      method: "POST",
-      body: JSON.stringify({ target_type: targetType, target_id: targetId, reaction_type: "favorite" })
-    });
+    if (favoriteReactionId) {
+      await api(`/api/reactions/${favoriteReactionId}`, { method: "DELETE" });
+    } else {
+      await api("/api/reactions", {
+        method: "POST",
+        body: JSON.stringify({ target_type: targetType, target_id: targetId, reaction_type: "favorite" })
+      });
+    }
     await Promise.all([loadNotes(), loadMistakes(), loadReview()]);
-    showToast("已收藏");
+    showToast(favoriteReactionId ? "已取消收藏" : "已收藏");
   } catch (error) {
     showToast(error.message);
   }
@@ -892,16 +896,17 @@ function renderSharedNotes() {
 }
 
 function renderNoteItem(note) {
+  const favoriteAction = note.favorite_reaction_id || "";
   return `
     <article class="item" data-note-id="${note.id}">
       <strong class="item-title">#${note.id} ${escapeHtml(note.title)}</strong>
-      <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评</div>
+      <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评 · ${note.is_favorite ? "已收藏" : "未收藏"}</div>
       ${formatTags(note.tags, "green")}
       ${note.summary ? `<div class="item-body">${escapeHtml(note.summary)}</div>` : `<div class="item-body">${escapeHtml(note.content_text.slice(0, 180))}</div>`}
       <div class="item-actions">
         <button class="secondary" data-action="publish">发布</button>
         <button class="secondary" data-action="like">点赞</button>
-        <button class="secondary" data-action="favorite">收藏</button>
+        <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${note.is_favorite ? "取消收藏" : "收藏"}</button>
         <button class="secondary" data-action="comment">评论</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
@@ -920,7 +925,7 @@ function bindNoteActions(container) {
         const action = button.dataset.action;
         if (action === "publish") publishNote(noteId);
         if (action === "like") likeNote(noteId);
-        if (action === "favorite") favoriteContent("note", noteId);
+        if (action === "favorite") toggleFavoriteContent("note", noteId, Number(button.dataset.favoriteReactionId) || null);
         if (action === "comment") commentNote(noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
@@ -968,21 +973,24 @@ function renderMistakes() {
   }
   refs.mistakeList.innerHTML = mistakes
     .map(
-      (mistake) => `
+      (mistake) => {
+        const favoriteAction = mistake.favorite_reaction_id || "";
+        return `
         <article class="item" data-mistake-id="${mistake.id}">
           <strong class="item-title">#${mistake.id} ${escapeHtml(mistake.question_content)}</strong>
-          <div class="item-meta">${escapeHtml(mistake.node_path || "未归档")} · ${escapeHtml(mistake.question_type || "未分类")} · ${escapeHtml(mistake.mastery_status)}</div>
+          <div class="item-meta">${escapeHtml(mistake.node_path || "未归档")} · ${escapeHtml(mistake.question_type || "未分类")} · ${escapeHtml(mistake.mastery_status)} · ${mistake.is_favorite ? "已收藏" : "未收藏"}</div>
           ${formatTags(mistake.tags, "amber")}
           <div class="item-body">正确答案：${escapeHtml(text(mistake.correct_answer))}\n错误原因：${escapeHtml(text(mistake.error_reason))}</div>
           <div class="item-actions">
             <button class="secondary" data-status="todo">待复习</button>
             <button class="secondary" data-status="retry">需再练</button>
             <button class="secondary" data-status="mastered">已掌握</button>
-            <button class="secondary" data-action="favorite">收藏</button>
+            <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${mistake.is_favorite ? "取消收藏" : "收藏"}</button>
             <button class="text danger-text" data-action="delete">删除</button>
           </div>
         </article>
-      `
+      `;
+      }
     )
     .join("");
   refs.mistakeList.querySelectorAll("[data-mistake-id]").forEach((item) => {
@@ -994,7 +1002,7 @@ function renderMistakes() {
       button.addEventListener("click", () => deleteMistake(id));
     });
     item.querySelectorAll("[data-action='favorite']").forEach((button) => {
-      button.addEventListener("click", () => favoriteContent("mistake", id));
+      button.addEventListener("click", () => toggleFavoriteContent("mistake", id, Number(button.dataset.favoriteReactionId) || null));
     });
   });
 }
@@ -1010,7 +1018,9 @@ function renderReview() {
   }
   refs.reviewList.innerHTML = state.reviewItems
     .map(
-      (item) => `
+      (item) => {
+        const favoriteAction = item.favorite_reaction_id || "";
+        return `
         <article class="item" data-review-type="${escapeHtml(item.source_type)}" data-review-id="${item.source_id}">
           <strong class="item-title">${escapeHtml(item.source_type)} #${item.source_id} · ${escapeHtml(item.title)}</strong>
           <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · ${item.is_favorite ? "已收藏" : "未收藏"}${item.question_type ? ` · ${escapeHtml(item.question_type)}` : ""}${item.mastery_status ? ` · ${escapeHtml(item.mastery_status)}` : ""}</div>
@@ -1018,10 +1028,11 @@ function renderReview() {
           <div class="item-body">${escapeHtml(item.snippet || "")}</div>
           <div class="item-actions">
             <button class="secondary" data-action="open-review">打开位置</button>
-            <button class="secondary" data-action="favorite-review">收藏</button>
+            <button class="secondary" data-action="favorite-review" data-favorite-reaction-id="${favoriteAction}">${item.is_favorite ? "取消收藏" : "收藏"}</button>
           </div>
         </article>
-      `
+      `;
+      }
     )
     .join("");
   refs.reviewList.querySelectorAll("[data-review-id]").forEach((item) => {
@@ -1031,7 +1042,7 @@ function renderReview() {
       openSearchResult(sourceType, sourceId);
     });
     item.querySelector("[data-action='favorite-review']").addEventListener("click", () => {
-      favoriteContent(sourceType, sourceId);
+      toggleFavoriteContent(sourceType, sourceId, Number(item.querySelector("[data-action='favorite-review']").dataset.favoriteReactionId) || null);
     });
   });
 }

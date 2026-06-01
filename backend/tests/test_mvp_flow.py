@@ -309,6 +309,38 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert review_mistake_res.status_code == 200
         assert any(item["source_id"] == mistake_id for item in review_mistake_res.json())
 
+        note_list_with_favorite_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"]},
+        )
+        assert note_list_with_favorite_res.status_code == 200
+        note_item = next(item for item in note_list_with_favorite_res.json() if item["id"] == note_id)
+        assert note_item["is_favorite"] is True
+        assert note_item["favorite_reaction_id"] == favorite_note_res.json()["id"]
+
+        cancel_favorite_note_res = await client.delete(
+            f"/api/reactions/{favorite_note_res.json()['id']}",
+            headers=alice,
+        )
+        assert cancel_favorite_note_res.status_code == 200
+        note_list_after_cancel_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"]},
+        )
+        note_after_cancel = next(item for item in note_list_after_cancel_res.json() if item["id"] == note_id)
+        assert note_after_cancel["is_favorite"] is False
+        assert note_after_cancel["favorite_reaction_id"] is None
+
+        review_after_cancel_res = await client.get(
+            f"/api/courses/{course['id']}/review",
+            headers=alice,
+            params={"mode": "favorites", "node_id": point_id},
+        )
+        assert review_after_cancel_res.status_code == 200
+        assert {item["source_type"] for item in review_after_cancel_res.json()} == {"mistake"}
+
         bob_res = await client.post(
             "/api/auth/register",
             json={"username": "bob", "password": "password123"},
