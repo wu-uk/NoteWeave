@@ -116,6 +116,12 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function renderMarkdown(value) {
+  return window.NoteWeaveRender
+    ? window.NoteWeaveRender.renderMarkdown(value)
+    : escapeHtml(value).replace(/\n/g, "<br />");
+}
+
 function setToken(token) {
   state.token = token || "";
   if (state.token) {
@@ -922,7 +928,8 @@ function renderNoteItem(note) {
       <strong class="item-title">#${note.id} ${escapeHtml(note.title)}</strong>
       <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评 · ${note.is_liked ? "已点赞" : "未点赞"} · ${note.is_favorite ? "已收藏" : "未收藏"}</div>
       ${formatTags(note.tags, "green")}
-      ${note.summary ? `<div class="item-body">${escapeHtml(note.summary)}</div>` : `<div class="item-body">${escapeHtml(note.content_text.slice(0, 180))}</div>`}
+      ${note.summary ? `<div class="note-summary">${escapeHtml(note.summary)}</div>` : ""}
+      <div class="markdown-body">${renderMarkdown(note.content_text || "")}</div>
       <div class="item-actions">
         <button class="secondary" data-action="publish">发布</button>
         <button class="secondary" data-action="like" data-like-reaction-id="${likeAction}">${note.is_liked ? "取消点赞" : "点赞"}</button>
@@ -1000,7 +1007,15 @@ function renderMistakes() {
           <strong class="item-title">#${mistake.id} ${escapeHtml(mistake.question_content)}</strong>
           <div class="item-meta">${escapeHtml(mistake.node_path || "未归档")} · ${escapeHtml(mistake.question_type || "未分类")} · ${escapeHtml(mistake.mastery_status)} · ${mistake.is_favorite ? "已收藏" : "未收藏"}</div>
           ${formatTags(mistake.tags, "amber")}
-          <div class="item-body">正确答案：${escapeHtml(text(mistake.correct_answer))}\n错误原因：${escapeHtml(text(mistake.error_reason))}</div>
+          <div class="markdown-body compact">
+            <h4>题目</h4>
+            ${renderMarkdown(mistake.question_content || "")}
+            <h4>正确答案</h4>
+            ${renderMarkdown(text(mistake.correct_answer))}
+            <h4>错误原因</h4>
+            ${renderMarkdown(text(mistake.error_reason))}
+            ${mistake.solution ? `<h4>解题思路</h4>${renderMarkdown(mistake.solution)}` : ""}
+          </div>
           <div class="item-actions">
             <button class="secondary" data-status="todo">待复习</button>
             <button class="secondary" data-status="retry">需再练</button>
