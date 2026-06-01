@@ -9,6 +9,7 @@ const state = {
   tree: null,
   selectedNode: null,
   expandedNodeIds: new Set(),
+  nodeDetail: null,
   notes: [],
   sharedNotes: [],
   mistakes: [],
@@ -233,6 +234,7 @@ async function logout() {
   state.tree = null;
   state.selectedNode = null;
   state.expandedNodeIds = new Set();
+  state.nodeDetail = null;
   state.notes = [];
   state.sharedNotes = [];
   state.mistakes = [];
@@ -317,6 +319,7 @@ async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
   state.expandedNodeIds = new Set();
+  state.nodeDetail = null;
   await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   render();
 }
@@ -338,6 +341,7 @@ async function loadTree() {
   }
   renderTree();
   renderSelectedNode();
+  await loadSelectedNodeDetail();
 }
 
 async function loadMembers() {
@@ -899,8 +903,10 @@ function renderTree() {
   refs.knowledgeTree.querySelectorAll("[data-select-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedNode = state.tree.nodes.find((node) => node.id === Number(button.dataset.selectNodeId));
+      state.nodeDetail = null;
       renderTree();
       renderSelectedNode();
+      loadSelectedNodeDetail();
     });
   });
   refs.knowledgeTree.querySelectorAll("[data-toggle-node-id]").forEach((button) => {
@@ -953,6 +959,17 @@ function collapseTree() {
   renderTree();
 }
 
+async function loadSelectedNodeDetail() {
+  if (!state.selectedNode) return;
+  try {
+    state.nodeDetail = await api(`/api/tree/nodes/${state.selectedNode.id}/detail`);
+  } catch (error) {
+    state.nodeDetail = null;
+    showToast(error.message);
+  }
+  renderSelectedNode();
+}
+
 function renderSelectedNode() {
   const node = state.selectedNode;
   if (!node) {
@@ -966,10 +983,69 @@ function renderSelectedNode() {
     <div class="metric"><strong>${node.note_count || 0}</strong><span>笔记</span></div>
     <div class="metric"><strong>${node.mistake_count || 0}</strong><span>错题</span></div>
     <div class="metric"><strong>${node.impact || 0}</strong><span>热度</span></div>
+    ${renderNodeDetailPanel(state.nodeDetail)}
   `;
   if ($("suggestion-target-type").value === "knowledge_node") {
     $("suggestion-target-id").value = node.id;
   }
+  bindNodeDetailActions();
+}
+
+function renderNodeDetailPanel(detail) {
+  if (!detail) {
+    return `<div class="node-detail-panel"><div class="meta">正在加载节点关联内容</div></div>`;
+  }
+  const notes = detail.notes || [];
+  const mistakes = detail.mistakes || [];
+  const summaries = detail.summaries || [];
+  const comments = detail.recent_comments || [];
+  return `
+    <div class="node-detail-panel">
+      <div class="node-detail-section">
+        <strong>标签</strong>
+        ${
+          detail.tag_summary && detail.tag_summary.length
+            ? `<div class="tag-row">${detail.tag_summary.map((item) => `<span class="tag green">${escapeHtml(item.tag)} × ${item.count}</span>`).join("")}</div>`
+            : `<div class="meta">暂无标签</div>`
+        }
+      </div>
+      <div class="node-detail-section">
+        <strong>摘要</strong>
+        ${
+          summaries.length
+            ? summaries.map((item) => `<div class="node-detail-card"><span>${escapeHtml(item.title)}</span><p>${escapeHtml(item.summary)}</p></div>`).join("")
+            : `<div class="meta">暂无摘要</div>`
+        }
+      </div>
+      <div class="node-detail-section">
+        <strong>关联内容</strong>
+        ${
+          notes.length || mistakes.length
+            ? [
+                ...notes.slice(0, 3).map((note) => `<button class="text node-open" data-node-open-type="note" data-node-open-id="${note.id}">笔记 #${note.id} ${escapeHtml(note.title)}</button>`),
+                ...mistakes.slice(0, 3).map((mistake) => `<button class="text node-open" data-node-open-type="mistake" data-node-open-id="${mistake.id}">错题 #${mistake.id} ${escapeHtml(mistake.question_content.slice(0, 40))}</button>`)
+              ].join("")
+            : `<div class="meta">暂无关联内容</div>`
+        }
+      </div>
+      <div class="node-detail-section">
+        <strong>最近讨论</strong>
+        ${
+          comments.length
+            ? comments.map((comment) => `<div class="node-detail-card"><span>${escapeHtml(comment.target_title)}</span><p>${escapeHtml(comment.content)}</p></div>`).join("")
+            : `<div class="meta">暂无讨论</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function bindNodeDetailActions() {
+  refs.nodeSummary.querySelectorAll("[data-node-open-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openSearchResult(button.dataset.nodeOpenType, Number(button.dataset.nodeOpenId));
+    });
+  });
 }
 
 function renderNotes() {

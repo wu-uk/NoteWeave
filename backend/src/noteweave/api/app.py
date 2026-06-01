@@ -1427,7 +1427,59 @@ def serialize_node(
         else:
             data["notes"] = [serialize_note(n, db) for n in db.all(f"SELECT * FROM notes WHERE node_id = ? AND {note_filter}", params)]
             data["mistakes"] = [serialize_mistake(m, db) for m in db.all(f"SELECT * FROM mistakes WHERE node_id = ? AND {mistake_filter}", params)]
+        data["tag_summary"] = node_tag_summary(data["notes"], data["mistakes"])
+        data["summaries"] = [
+            {
+                "note_id": note["id"],
+                "title": note["title"],
+                "summary": note["summary"],
+            }
+            for note in data["notes"]
+            if note.get("summary")
+        ]
+        data["recent_comments"] = node_recent_comments(db, data["notes"], data["mistakes"])
     return data
+
+
+def node_tag_summary(notes: list[dict[str, Any]], mistakes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for item in [*notes, *mistakes]:
+        for tag in item.get("tags", []):
+            counts[tag] = counts.get(tag, 0) + 1
+    return [
+        {"tag": tag, "count": count}
+        for tag, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))
+    ]
+
+
+def node_recent_comments(
+    db: Database,
+    notes: list[dict[str, Any]],
+    mistakes: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    comments: list[dict[str, Any]] = []
+    targets = [("note", int(note["id"]), note["title"]) for note in notes]
+    targets.extend(("mistake", int(mistake["id"]), mistake["question_content"][:80]) for mistake in mistakes)
+    for target_type, target_id, target_title in targets:
+        rows = db.all(
+            """
+            SELECT * FROM comments
+            WHERE target_type = ? AND target_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (target_type, target_id, limit),
+        )
+        comments.extend(
+            {
+                **serialize_comment(row),
+                "target_title": target_title,
+            }
+            for row in rows
+        )
+    comments.sort(key=lambda item: item["created_at"], reverse=True)
+    return comments[:limit]
 
 
 def build_tree_response(db: Database, rows: list[dict[str, Any]]) -> dict[str, Any]:

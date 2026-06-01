@@ -454,6 +454,49 @@ textarea:focus {
   margin-bottom: 14px;
 }
 
+.node-detail-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.node-detail-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  background: #fff;
+}
+
+.node-detail-section > strong {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+}
+
+.node-detail-card {
+  margin-top: 7px;
+  border-left: 3px solid #cbd5e1;
+  padding-left: 9px;
+}
+
+.node-detail-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-detail-card p {
+  margin: 3px 0 0;
+  color: #334155;
+  font-size: 13px;
+}
+
+.node-open {
+  display: block;
+  margin-top: 6px;
+  text-align: left;
+}
+
 .metric {
   padding: 12px;
   border: 1px solid var(--line);

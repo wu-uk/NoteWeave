@@ -346,6 +346,19 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert suggestions[0]["status"] == "accepted"
         assert suggestions[0]["target_title"] == "Quick sort complexity"
 
+        node_detail_res = await client.get(f"/api/tree/nodes/{point_id}/detail", headers=alice)
+        assert node_detail_res.status_code == 200
+        node_detail = node_detail_res.json()
+        assert {note["id"] for note in node_detail["notes"]} >= {note_id, popular_note_id}
+        assert {mistake["id"] for mistake in node_detail["mistakes"]} == {mistake_id}
+        assert {"sorting", "manual-review"}.issubset({item["tag"] for item in node_detail["tag_summary"]})
+        assert node_detail["summaries"][0]["summary"] == summary_text
+        assert {comment["content"] for comment in node_detail["recent_comments"]} >= {
+            "This is useful for exam review.",
+            "Extra discussion.",
+            "Another discussion point.",
+        }
+
         search_res = await client.get(
             "/api/search",
             headers=alice,
