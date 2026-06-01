@@ -1,0 +1,217 @@
+from __future__ import annotations
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from noteweave.api.app import create_app
+from noteweave.core.settings import Settings
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.anyio
+async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
+    app = create_app(Settings(database_path=str(tmp_path / "noteweave.sqlite3")))
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        alice_res = await client.post(
+            "/api/auth/register",
+            json={
+                "username": "alice",
+                "password": "password123",
+                "display_name": "Alice",
+            },
+        )
+        assert alice_res.status_code == 200
+        alice_token = alice_res.json()["token"]
+        alice = auth_headers(alice_token)
+
+        course_res = await client.post(
+            "/api/courses",
+            headers=alice,
+            json={
+                "name": "Data Structures",
+                "description": "Course notes",
+                "semester": "2026 Spring",
+                "tags": ["cs", "algorithm"],
+            },
+        )
+        assert course_res.status_code == 200
+        course = course_res.json()
+        assert course["role"] == "maintainer"
+        assert course["stats"]["knowledge_node_count"] == 0
+
+        tree_res = await client.get(f"/api/courses/{course['id']}/tree", headers=alice)
+        assert tree_res.status_code == 200
+        root_id = tree_res.json()["tree"]["id"]
+
+        chapter_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=alice,
+            json={
+                "parent_id": root_id,
+                "type": "chapter",
+                "title": "Sorting",
+            },
+        )
+        assert chapter_res.status_code == 200
+        chapter_id = chapter_res.json()["id"]
+
+        point_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=alice,
+            json={
+                "parent_id": chapter_id,
+                "type": "knowledge_point",
+                "title": "Quick Sort",
+                "description": "Divide and conquer sorting",
+            },
+        )
+        assert point_res.status_code == 200
+        point_id = point_res.json()["id"]
+
+        note_res = await client.post(
+            "/api/notes",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "node_id": point_id,
+                "title": "Quick sort complexity",
+                "content_text": "Quick sort uses partitioning. Average complexity is O(n log n).",
+                "content_json": {"type": "markdown"},
+                "visibility": "private",
+                "status": "draft",
+                "tags": ["sorting", "quick-sort"],
+            },
+        )
+        assert note_res.status_code == 200
+        note_id = note_res.json()["id"]
+
+        publish_res = await client.post(f"/api/notes/{note_id}/publish", headers=alice)
+        assert publish_res.status_code == 200
+        assert publish_res.json()["visibility"] == "shared"
+
+        summary_res = await client.post(f"/api/ai/notes/{note_id}/summary", headers=alice)
+        assert summary_res.status_code == 200
+        summary_id = summary_res.json()["id"]
+        accept_summary_res = await client.post(
+            f"/api/ai/results/{summary_id}/accept", headers=alice
+        )
+        assert accept_summary_res.status_code == 200
+        assert accept_summary_res.json()["status"] == "accepted"
+
+        tags_res = await client.post(f"/api/ai/notes/{note_id}/tags", headers=alice)
+        assert tags_res.status_code == 200
+        accept_tags_res = await client.post(
+            f"/api/ai/results/{tags_res.json()['id']}/accept", headers=alice
+        )
+        assert accept_tags_res.status_code == 200
+
+        comment_res = await client.post(
+            "/api/comments",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": note_id,
+                "content": "This is useful for exam review.",
+            },
+        )
+        assert comment_res.status_code == 200
+
+        reaction_res = await client.post(
+            "/api/reactions",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": note_id,
+                "reaction_type": "like",
+            },
+        )
+        assert reaction_res.status_code == 200
+
+        mistake_res = await client.post(
+            "/api/mistakes",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "node_id": point_id,
+                "question_content": "What is quick sort worst-case complexity?",
+                "correct_answer": "O(n^2)",
+                "wrong_answer": "O(n log n)",
+                "error_reason": "Ignored unbalanced partitions.",
+                "solution": "Use randomized pivot to reduce worst-case probability.",
+                "reflection": "Check partition balance.",
+                "question_type": "complexity",
+                "mastery_status": "todo",
+                "tags": ["sorting"],
+                "visibility": "shared",
+            },
+        )
+        assert mistake_res.status_code == 200
+        mistake_id = mistake_res.json()["id"]
+
+        mastery_res = await client.patch(
+            f"/api/mistakes/{mistake_id}/mastery",
+            headers=alice,
+            json={"mastery_status": "retry"},
+        )
+        assert mastery_res.status_code == 200
+        assert mastery_res.json()["mastery_status"] == "retry"
+
+        suggestion_res = await client.post(
+            "/api/suggestions",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": note_id,
+                "type": "correction",
+                "content": "Add worst-case complexity notes.",
+            },
+        )
+        assert suggestion_res.status_code == 200
+        handle_res = await client.patch(
+            f"/api/suggestions/{suggestion_res.json()['id']}",
+            headers=alice,
+            json={"status": "accepted"},
+        )
+        assert handle_res.status_code == 200
+        assert handle_res.json()["status"] == "accepted"
+
+        search_res = await client.get(
+            "/api/search",
+            headers=alice,
+            params={"course_id": course["id"], "q": "quick"},
+        )
+        assert search_res.status_code == 200
+        search_results = search_res.json()
+        assert {item["source_type"] for item in search_results} == {"note", "mistake"}
+        assert all("node_path" in item for item in search_results)
+
+        bob_res = await client.post(
+            "/api/auth/register",
+            json={"username": "bob", "password": "password123"},
+        )
+        assert bob_res.status_code == 200
+        bob = auth_headers(bob_res.json()["token"])
+
+        before_join = await client.get(f"/api/courses/{course['id']}", headers=bob)
+        assert before_join.status_code == 403
+
+        join_res = await client.post(
+            f"/api/courses/{course['id']}/join",
+            headers=bob,
+            json={"invite_code": course["invite_code"]},
+        )
+        assert join_res.status_code == 200
+        assert join_res.json()["role"] == "student"
+
+        shared_notes_res = await client.get(
+            "/api/notes",
+            headers=bob,
+            params={"course_id": course["id"], "shared_only": True},
+        )
+        assert shared_notes_res.status_code == 200
+        assert shared_notes_res.json()[0]["id"] == note_id
