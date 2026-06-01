@@ -1308,6 +1308,7 @@ def serialize_note(
 ) -> dict[str, Any]:
     node = db.one("SELECT id, title, path FROM knowledge_nodes WHERE id = ?", (row["node_id"],)) if row["node_id"] else None
     favorite_reaction_id = reaction_id(db, "note", int(row["id"]), user_id, "favorite") if user_id is not None else None
+    like_reaction_id = reaction_id(db, "note", int(row["id"]), user_id, "like") if user_id is not None else None
     data = {
         "id": row["id"],
         "course_id": row["course_id"],
@@ -1324,6 +1325,8 @@ def serialize_note(
         "author_id": row["author_id"],
         "like_count": row["like_count"],
         "comment_count": row["comment_count"],
+        "is_liked": like_reaction_id is not None,
+        "like_reaction_id": like_reaction_id,
         "is_favorite": favorite_reaction_id is not None,
         "favorite_reaction_id": favorite_reaction_id,
         "created_at": row["created_at"],

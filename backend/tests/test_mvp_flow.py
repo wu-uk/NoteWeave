@@ -316,8 +316,26 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert note_list_with_favorite_res.status_code == 200
         note_item = next(item for item in note_list_with_favorite_res.json() if item["id"] == note_id)
+        assert note_item["is_liked"] is True
+        assert note_item["like_reaction_id"] == reaction_res.json()["id"]
+        assert note_item["like_count"] == 1
         assert note_item["is_favorite"] is True
         assert note_item["favorite_reaction_id"] == favorite_note_res.json()["id"]
+
+        cancel_like_res = await client.delete(
+            f"/api/reactions/{reaction_res.json()['id']}",
+            headers=alice,
+        )
+        assert cancel_like_res.status_code == 200
+        note_list_after_unlike_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"]},
+        )
+        note_after_unlike = next(item for item in note_list_after_unlike_res.json() if item["id"] == note_id)
+        assert note_after_unlike["is_liked"] is False
+        assert note_after_unlike["like_reaction_id"] is None
+        assert note_after_unlike["like_count"] == 0
 
         cancel_favorite_note_res = await client.delete(
             f"/api/reactions/{favorite_note_res.json()['id']}",

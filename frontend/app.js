@@ -533,14 +533,18 @@ async function publishNote(noteId) {
   }
 }
 
-async function likeNote(noteId) {
+async function toggleLikeNote(noteId, likeReactionId) {
   try {
-    await api("/api/reactions", {
-      method: "POST",
-      body: JSON.stringify({ target_type: "note", target_id: noteId, reaction_type: "like" })
-    });
+    if (likeReactionId) {
+      await api(`/api/reactions/${likeReactionId}`, { method: "DELETE" });
+    } else {
+      await api("/api/reactions", {
+        method: "POST",
+        body: JSON.stringify({ target_type: "note", target_id: noteId, reaction_type: "like" })
+      });
+    }
     await loadNotes();
-    showToast("已点赞");
+    showToast(likeReactionId ? "已取消点赞" : "已点赞");
   } catch (error) {
     showToast(error.message);
   }
@@ -897,15 +901,16 @@ function renderSharedNotes() {
 
 function renderNoteItem(note) {
   const favoriteAction = note.favorite_reaction_id || "";
+  const likeAction = note.like_reaction_id || "";
   return `
     <article class="item" data-note-id="${note.id}">
       <strong class="item-title">#${note.id} ${escapeHtml(note.title)}</strong>
-      <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评 · ${note.is_favorite ? "已收藏" : "未收藏"}</div>
+      <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评 · ${note.is_liked ? "已点赞" : "未点赞"} · ${note.is_favorite ? "已收藏" : "未收藏"}</div>
       ${formatTags(note.tags, "green")}
       ${note.summary ? `<div class="item-body">${escapeHtml(note.summary)}</div>` : `<div class="item-body">${escapeHtml(note.content_text.slice(0, 180))}</div>`}
       <div class="item-actions">
         <button class="secondary" data-action="publish">发布</button>
-        <button class="secondary" data-action="like">点赞</button>
+        <button class="secondary" data-action="like" data-like-reaction-id="${likeAction}">${note.is_liked ? "取消点赞" : "点赞"}</button>
         <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${note.is_favorite ? "取消收藏" : "收藏"}</button>
         <button class="secondary" data-action="comment">评论</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
@@ -924,7 +929,7 @@ function bindNoteActions(container) {
       button.addEventListener("click", () => {
         const action = button.dataset.action;
         if (action === "publish") publishNote(noteId);
-        if (action === "like") likeNote(noteId);
+        if (action === "like") toggleLikeNote(noteId, Number(button.dataset.likeReactionId) || null);
         if (action === "favorite") toggleFavoriteContent("note", noteId, Number(button.dataset.favoriteReactionId) || null);
         if (action === "comment") commentNote(noteId);
         if (action === "summary") runAi(noteId, "summary");
