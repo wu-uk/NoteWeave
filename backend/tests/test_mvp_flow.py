@@ -47,6 +47,28 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         me_res = await client.get("/api/auth/me", headers=alice)
         assert me_res.status_code == 200
         assert me_res.json()["display_name"] == "Alice Cooper"
+        wrong_password_update_res = await client.patch(
+            "/api/auth/me",
+            headers=alice,
+            json={"current_password": "wrong-password", "new_password": "new-password123"},
+        )
+        assert wrong_password_update_res.status_code == 403
+        password_update_res = await client.patch(
+            "/api/auth/me",
+            headers=alice,
+            json={"current_password": "password123", "new_password": "new-password123"},
+        )
+        assert password_update_res.status_code == 200
+        old_login_res = await client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "password123"},
+        )
+        assert old_login_res.status_code == 401
+        new_login_res = await client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "new-password123"},
+        )
+        assert new_login_res.status_code == 200
 
         ai_status_res = await client.get("/api/ai/config/status", headers=alice)
         assert ai_status_res.status_code == 200

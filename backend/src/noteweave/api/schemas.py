@@ -17,7 +17,9 @@ class LoginRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
-    display_name: str = Field(min_length=1, max_length=80)
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    current_password: str | None = None
+    new_password: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 class CourseCreateRequest(BaseModel):

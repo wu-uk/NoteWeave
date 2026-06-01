@@ -39,6 +39,7 @@ const refs = {
   loginButton: $("login-button"),
   registerButton: $("register-button"),
   editProfileButton: $("edit-profile-button"),
+  changePasswordButton: $("change-password-button"),
   logoutButton: $("logout-button"),
   courseList: $("course-list"),
   courseTitle: $("course-title"),
@@ -187,6 +188,7 @@ function bindEvents() {
   refs.loginButton.addEventListener("click", () => submitAuth("login"));
   refs.registerButton.addEventListener("click", () => submitAuth("register"));
   refs.editProfileButton.addEventListener("click", editProfile);
+  refs.changePasswordButton.addEventListener("click", changePassword);
   refs.logoutButton.addEventListener("click", logout);
   refs.createCourseButton.addEventListener("click", createCourse);
   refs.joinCourseButton.addEventListener("click", joinCourse);
@@ -301,6 +303,27 @@ async function editProfile() {
     });
     renderAuth();
     showToast("昵称已更新");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function changePassword() {
+  if (!state.user) return;
+  const currentPassword = window.prompt("当前密码");
+  if (currentPassword === null) return;
+  const newPassword = window.prompt("新密码，至少 6 位");
+  if (newPassword === null) return;
+  if (newPassword.length < 6) {
+    showToast("新密码至少 6 位");
+    return;
+  }
+  try {
+    await api("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+    });
+    showToast("密码已更新");
   } catch (error) {
     showToast(error.message);
   }

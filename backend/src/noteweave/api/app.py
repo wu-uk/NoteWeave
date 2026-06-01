@@ -113,7 +113,14 @@ def register_routes(app: FastAPI) -> None:
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
-        db.execute("UPDATE users SET display_name = ? WHERE id = ?", (payload.display_name, user["id"]))
+        if payload.display_name is not None:
+            db.execute("UPDATE users SET display_name = ? WHERE id = ?", (payload.display_name, user["id"]))
+        if payload.new_password is not None:
+            if not payload.current_password:
+                raise HTTPException(status_code=400, detail="current password required")
+            if not verify_password(payload.current_password, user["password_hash"]):
+                raise HTTPException(status_code=403, detail="current password incorrect")
+            db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(payload.new_password), user["id"]))
         return serialize_user(get_user(db, int(user["id"])))
 
     @app.get("/api/ai/config/status")
