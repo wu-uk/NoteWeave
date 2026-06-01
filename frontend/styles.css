@@ -95,6 +95,19 @@ textarea {
   outline: none;
 }
 
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.check-line input {
+  width: auto;
+}
+
 textarea {
   min-height: 92px;
   resize: vertical;
@@ -433,6 +446,11 @@ textarea:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
+}
+
+.item.flash {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
 }
 
 .item-body {

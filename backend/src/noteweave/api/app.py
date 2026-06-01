@@ -870,10 +870,13 @@ def register_routes(app: FastAPI) -> None:
         node_id: int | None = None,
         tag: str | None = None,
         source_type: str | None = None,
+        author_id: int | None = None,
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
         ensure_member(db, course_id, user["id"])
+        if source_type not in {None, "note", "mistake"}:
+            raise HTTPException(status_code=400, detail="unsupported source type")
         query = q.strip().lower()
         results: list[dict[str, Any]] = []
         if source_type in {None, "note"}:
@@ -881,7 +884,7 @@ def register_routes(app: FastAPI) -> None:
             for note in notes:
                 if note["visibility"] != "shared" and note["author_id"] != user["id"]:
                     continue
-                item = match_note(db, note, query, node_id, tag)
+                item = match_note(db, note, query, node_id, tag, author_id)
                 if item:
                     results.append(item)
         if source_type in {None, "mistake"}:
@@ -889,7 +892,7 @@ def register_routes(app: FastAPI) -> None:
             for mistake in mistakes:
                 if mistake["visibility"] != "shared" and mistake["author_id"] != user["id"]:
                     continue
-                item = match_mistake(db, mistake, query, node_id, tag)
+                item = match_mistake(db, mistake, query, node_id, tag, author_id)
                 if item:
                     results.append(item)
         results.sort(key=lambda row: (row["score"], row["updated_at"]), reverse=True)
@@ -1428,8 +1431,11 @@ def match_note(
     query: str,
     node_id: int | None,
     tag: str | None,
+    author_id: int | None,
 ) -> dict[str, Any] | None:
     if node_id is not None and note["node_id"] != node_id:
+        return None
+    if author_id is not None and note["author_id"] != author_id:
         return None
     tags = loads(note["tags"], [])
     if tag and tag not in tags:
@@ -1447,10 +1453,13 @@ def match_note(
         return None
     score = sum({"title": 5, "tag": 4, "node": 3, "summary": 2, "content": 1}[name] for name in matched)
     score += min(int(note["like_count"]), 5)
+    author = get_user(db, int(note["author_id"]))
     return {
         "source_type": "note",
         "source_id": note["id"],
         "node_id": note["node_id"],
+        "author_id": note["author_id"],
+        "author_name": author["display_name"],
         "title": note["title"],
         "snippet": make_snippet(note["content_text"] or note["summary"] or note["title"], query),
         "node_path": node["path"] if node else None,
@@ -1466,8 +1475,11 @@ def match_mistake(
     query: str,
     node_id: int | None,
     tag: str | None,
+    author_id: int | None,
 ) -> dict[str, Any] | None:
     if node_id is not None and mistake["node_id"] != node_id:
+        return None
+    if author_id is not None and mistake["author_id"] != author_id:
         return None
     tags = loads(mistake["tags"], [])
     if tag and tag not in tags:
@@ -1492,10 +1504,13 @@ def match_mistake(
     if not matched:
         return None
     score = sum({"tag": 4, "node": 3, "question_type": 2, "content": 1}[name] for name in matched)
+    author = get_user(db, int(mistake["author_id"]))
     return {
         "source_type": "mistake",
         "source_id": mistake["id"],
         "node_id": mistake["node_id"],
+        "author_id": mistake["author_id"],
+        "author_name": author["display_name"],
         "title": mistake["question_content"][:80],
         "snippet": make_snippet(content, query),
         "node_path": node["path"] if node else None,

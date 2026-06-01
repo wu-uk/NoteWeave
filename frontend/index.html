@@ -216,11 +216,16 @@
             <form class="search-form" id="search-form">
               <input id="search-query" placeholder="关键词" />
               <input id="search-tag" placeholder="标签" />
+              <input id="search-author" type="number" min="1" placeholder="作者 ID" />
               <select id="search-type">
                 <option value="">全部内容</option>
                 <option value="note">笔记</option>
                 <option value="mistake">错题</option>
               </select>
+              <label class="check-line">
+                <input id="search-current-node" type="checkbox" />
+                <span>当前节点</span>
+              </label>
               <button type="submit">检索</button>
             </form>
             <div class="item-list search-results" id="search-results"></div>

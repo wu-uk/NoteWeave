@@ -550,8 +550,17 @@ async function search(event) {
   });
   const tag = $("search-tag").value.trim();
   const sourceType = $("search-type").value;
+  const authorId = $("search-author").value.trim();
   if (tag) params.set("tag", tag);
   if (sourceType) params.set("source_type", sourceType);
+  if (authorId) params.set("author_id", authorId);
+  if ($("search-current-node").checked) {
+    if (!state.selectedNode) {
+      showToast("请先选择知识树节点");
+      return;
+    }
+    params.set("node_id", state.selectedNode.id);
+  }
   try {
     const results = await api(`/api/search?${params.toString()}`);
     renderSearchResults(results);
@@ -895,14 +904,43 @@ function renderSearchResults(results = []) {
   refs.searchResults.innerHTML = results
     .map(
       (item) => `
-        <article class="item">
+        <article class="item search-result" data-source-type="${escapeHtml(item.source_type)}" data-source-id="${item.source_id}">
           <strong class="item-title">${escapeHtml(item.source_type)} #${item.source_id} · ${escapeHtml(item.title)}</strong>
-          <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · 匹配 ${escapeHtml(item.matched_fields.join(", "))} · 分数 ${item.score}</div>
+          <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · 作者 ${escapeHtml(item.author_name || String(item.author_id || ""))} · 匹配 ${escapeHtml(item.matched_fields.join(", "))} · 分数 ${item.score}</div>
           <div class="item-body">${escapeHtml(item.snippet)}</div>
+          <div class="item-actions">
+            <button class="secondary" data-action="open-result">打开位置</button>
+          </div>
         </article>
       `
     )
     .join("");
+  refs.searchResults.querySelectorAll("[data-action='open-result']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = button.closest("[data-source-type]");
+      openSearchResult(item.dataset.sourceType, Number(item.dataset.sourceId));
+    });
+  });
+}
+
+async function openSearchResult(sourceType, sourceId) {
+  state.activeView = sourceType === "mistake" ? "mistakes" : "notes";
+  renderTabs();
+  if (sourceType === "mistake") {
+    await loadMistakes();
+    highlightItem(`[data-mistake-id="${sourceId}"]`);
+    return;
+  }
+  await loadNotes();
+  highlightItem(`[data-note-id="${sourceId}"]`);
+}
+
+function highlightItem(selector) {
+  const item = document.querySelector(selector);
+  if (!item) return;
+  item.classList.add("flash");
+  item.scrollIntoView({ block: "center", behavior: "smooth" });
+  window.setTimeout(() => item.classList.remove("flash"), 1400);
 }
 
 function renderSuggestions() {

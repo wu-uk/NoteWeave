@@ -34,6 +34,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert alice_res.status_code == 200
         alice_token = alice_res.json()["token"]
+        alice_id = alice_res.json()["user"]["id"]
         alice = auth_headers(alice_token)
 
         course_res = await client.post(
@@ -241,6 +242,32 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         search_results = search_res.json()
         assert {item["source_type"] for item in search_results} == {"note", "mistake"}
         assert all("node_path" in item for item in search_results)
+        assert all(item["author_id"] == alice_id for item in search_results)
+        assert all(item["author_name"] == "Alice" for item in search_results)
+
+        scoped_search_res = await client.get(
+            "/api/search",
+            headers=alice,
+            params={
+                "course_id": course["id"],
+                "q": "quick",
+                "node_id": point_id,
+                "author_id": alice_id,
+                "source_type": "note",
+            },
+        )
+        assert scoped_search_res.status_code == 200
+        scoped_results = scoped_search_res.json()
+        assert [item["source_type"] for item in scoped_results] == ["note"]
+        assert scoped_results[0]["node_id"] == point_id
+
+        missing_author_search_res = await client.get(
+            "/api/search",
+            headers=alice,
+            params={"course_id": course["id"], "q": "quick", "author_id": 999999},
+        )
+        assert missing_author_search_res.status_code == 200
+        assert missing_author_search_res.json() == []
 
         bob_res = await client.post(
             "/api/auth/register",
