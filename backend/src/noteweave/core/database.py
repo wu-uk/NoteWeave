@@ -217,6 +217,16 @@ CREATE TABLE IF NOT EXISTS reactions (
   UNIQUE(target_type, target_id, reaction_type, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS content_views (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  viewed_at TEXT NOT NULL,
+  UNIQUE(target_type, target_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS suggestions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   target_type TEXT NOT NULL,

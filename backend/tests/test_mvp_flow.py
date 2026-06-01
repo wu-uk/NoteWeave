@@ -407,6 +407,28 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert review_after_cancel_res.status_code == 200
         assert {item["source_type"] for item in review_after_cancel_res.json()} == {"mistake"}
 
+        note_view_res = await client.post(
+            "/api/views",
+            headers=alice,
+            json={"target_type": "note", "target_id": note_id},
+        )
+        assert note_view_res.status_code == 200
+        mistake_view_res = await client.post(
+            "/api/views",
+            headers=alice,
+            json={"target_type": "mistake", "target_id": mistake_id},
+        )
+        assert mistake_view_res.status_code == 200
+        viewed_review_res = await client.get(
+            f"/api/courses/{course['id']}/review",
+            headers=alice,
+            params={"mode": "viewed", "node_id": point_id},
+        )
+        assert viewed_review_res.status_code == 200
+        viewed_items = viewed_review_res.json()
+        assert {item["source_type"] for item in viewed_items} == {"note", "mistake"}
+        assert all(item["last_viewed_at"] for item in viewed_items)
+
         shared_by_likes_res = await client.get(
             "/api/notes",
             headers=alice,

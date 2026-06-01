@@ -30,6 +30,7 @@ from noteweave.api.schemas import (
     RegisterRequest,
     SuggestionCreateRequest,
     SuggestionHandleRequest,
+    ViewCreateRequest,
 )
 from noteweave.core.ai import AIAssistService
 from noteweave.core.database import Database, dumps, loads, now_iso
@@ -561,6 +562,7 @@ def register_routes(app: FastAPI) -> None:
             [
                 ("DELETE FROM comments WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM reactions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM content_views WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM suggestions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM ai_results WHERE target_type = 'note' AND target_id = ?", (note_id,)),
                 ("DELETE FROM notes WHERE id = ?", (note_id,)),
@@ -789,6 +791,7 @@ def register_routes(app: FastAPI) -> None:
             [
                 ("DELETE FROM comments WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM reactions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM content_views WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM suggestions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM ai_results WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
                 ("DELETE FROM mistakes WHERE id = ?", (mistake_id,)),
@@ -872,7 +875,7 @@ def register_routes(app: FastAPI) -> None:
         db: Database = Depends(get_db),
     ):
         ensure_member(db, course_id, user["id"])
-        if mode not in {"all", "favorites", "recent", "top"}:
+        if mode not in {"all", "favorites", "recent", "viewed", "top"}:
             raise HTTPException(status_code=400, detail="unsupported review mode")
         if node_id is not None:
             ensure_node_in_course(db, node_id, course_id)
@@ -893,9 +896,48 @@ def register_routes(app: FastAPI) -> None:
 
         if mode == "top":
             items.sort(key=lambda row: (row["like_count"], row["updated_at"]), reverse=True)
+        elif mode == "viewed":
+            items.sort(key=lambda row: row.get("last_viewed_at") or "", reverse=True)
         else:
             items.sort(key=lambda row: row["updated_at"], reverse=True)
         return items[:50]
+
+    @app.post("/api/views")
+    async def record_view(
+        payload: ViewCreateRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        course_id = target_course_id(db, payload.target_type, payload.target_id)
+        ensure_member(db, course_id, user["id"])
+        if payload.target_type == "note":
+            ensure_note_access(db, get_note(db, payload.target_id), user["id"])
+        elif payload.target_type == "mistake":
+            ensure_mistake_access(db, get_mistake(db, payload.target_id), user["id"])
+        viewed_at = now_iso()
+        try:
+            view_id = db.execute(
+                """
+                INSERT INTO content_views (target_type, target_id, course_id, user_id, viewed_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (payload.target_type, payload.target_id, course_id, user["id"], viewed_at),
+            )
+        except sqlite3.IntegrityError:
+            db.execute(
+                """
+                UPDATE content_views
+                SET course_id = ?, viewed_at = ?
+                WHERE target_type = ? AND target_id = ? AND user_id = ?
+                """,
+                (course_id, viewed_at, payload.target_type, payload.target_id, user["id"]),
+            )
+            row = db.one(
+                "SELECT id FROM content_views WHERE target_type = ? AND target_id = ? AND user_id = ?",
+                (payload.target_type, payload.target_id, user["id"]),
+            )
+            view_id = int(row["id"])
+        return {"id": view_id, "status": "ok", "viewed_at": viewed_at}
 
     @app.post("/api/suggestions")
     async def create_suggestion(
@@ -1432,6 +1474,7 @@ def review_note_item(db: Database, note: dict[str, Any], user_id: int) -> dict[s
     node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (note["node_id"],)) if note["node_id"] else None
     tags = loads(note["tags"], [])
     favorite_reaction_id = reaction_id(db, "note", int(note["id"]), user_id, "favorite")
+    last_viewed_at = content_viewed_at(db, "note", int(note["id"]), user_id)
     return {
         "source_type": "note",
         "source_id": note["id"],
@@ -1445,6 +1488,7 @@ def review_note_item(db: Database, note: dict[str, Any], user_id: int) -> dict[s
         "like_count": note["like_count"],
         "is_favorite": favorite_reaction_id is not None,
         "favorite_reaction_id": favorite_reaction_id,
+        "last_viewed_at": last_viewed_at,
         "updated_at": note["updated_at"],
     }
 
@@ -1454,6 +1498,7 @@ def review_mistake_item(db: Database, mistake: dict[str, Any], user_id: int) -> 
     tags = loads(mistake["tags"], [])
     content = " ".join([mistake["question_content"], mistake["error_reason"], mistake["solution"]]).strip()
     favorite_reaction_id = reaction_id(db, "mistake", int(mistake["id"]), user_id, "favorite")
+    last_viewed_at = content_viewed_at(db, "mistake", int(mistake["id"]), user_id)
     return {
         "source_type": "mistake",
         "source_id": mistake["id"],
@@ -1467,6 +1512,7 @@ def review_mistake_item(db: Database, mistake: dict[str, Any], user_id: int) -> 
         "like_count": 0,
         "is_favorite": favorite_reaction_id is not None,
         "favorite_reaction_id": favorite_reaction_id,
+        "last_viewed_at": last_viewed_at,
         "updated_at": mistake["updated_at"],
     }
 
@@ -1487,6 +1533,8 @@ def review_item_matches(
         return False
     if mode == "favorites" and not item["is_favorite"]:
         return False
+    if mode == "viewed" and not item.get("last_viewed_at"):
+        return False
     return True
 
 
@@ -1501,6 +1549,17 @@ def reaction_id(db: Database, target_type: str, target_id: int, user_id: int | N
         (target_type, target_id, user_id, reaction_type),
     )
     return int(row["id"]) if row else None
+
+
+def content_viewed_at(db: Database, target_type: str, target_id: int, user_id: int) -> str | None:
+    row = db.one(
+        """
+        SELECT viewed_at FROM content_views
+        WHERE target_type = ? AND target_id = ? AND user_id = ?
+        """,
+        (target_type, target_id, user_id),
+    )
+    return row["viewed_at"] if row else None
 
 
 def get_mistake(db: Database, mistake_id: int) -> dict[str, Any]:

@@ -1043,7 +1043,7 @@ function renderReview() {
         return `
         <article class="item" data-review-type="${escapeHtml(item.source_type)}" data-review-id="${item.source_id}">
           <strong class="item-title">${escapeHtml(item.source_type)} #${item.source_id} · ${escapeHtml(item.title)}</strong>
-          <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · ${item.is_favorite ? "已收藏" : "未收藏"}${item.question_type ? ` · ${escapeHtml(item.question_type)}` : ""}${item.mastery_status ? ` · ${escapeHtml(item.mastery_status)}` : ""}</div>
+          <div class="item-meta">${escapeHtml(item.node_path || "未归档")} · ${item.is_favorite ? "已收藏" : "未收藏"}${item.last_viewed_at ? ` · 浏览 ${escapeHtml(item.last_viewed_at.slice(0, 10))}` : ""}${item.question_type ? ` · ${escapeHtml(item.question_type)}` : ""}${item.mastery_status ? ` · ${escapeHtml(item.mastery_status)}` : ""}</div>
           ${formatTags(item.tags, item.source_type === "note" ? "green" : "amber")}
           <div class="item-body">${escapeHtml(item.snippet || "")}</div>
           <div class="item-actions">
@@ -1106,6 +1106,7 @@ function renderSearchResults(results = []) {
 }
 
 async function openSearchResult(sourceType, sourceId) {
+  await recordContentView(sourceType, sourceId);
   state.activeView = sourceType === "mistake" ? "mistakes" : "notes";
   renderTabs();
   if (sourceType === "mistake") {
@@ -1115,6 +1116,18 @@ async function openSearchResult(sourceType, sourceId) {
   }
   await loadNotes();
   highlightItem(`[data-note-id="${sourceId}"]`);
+}
+
+async function recordContentView(sourceType, sourceId) {
+  try {
+    await api("/api/views", {
+      method: "POST",
+      body: JSON.stringify({ target_type: sourceType, target_id: sourceId })
+    });
+    await loadReview();
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function highlightItem(selector) {

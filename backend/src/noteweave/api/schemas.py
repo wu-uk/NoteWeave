@@ -137,6 +137,11 @@ class ReactionCreateRequest(BaseModel):
     reaction_type: Literal["like", "favorite"]
 
 
+class ViewCreateRequest(BaseModel):
+    target_type: Literal["note", "mistake"]
+    target_id: int
+
+
 class SuggestionCreateRequest(BaseModel):
     target_type: Literal["note", "mistake", "knowledge_node"]
     target_id: int
