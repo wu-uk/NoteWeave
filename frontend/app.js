@@ -788,6 +788,7 @@ function renderNoteItem(note) {
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
         <button class="text" data-action="suggest-target">设为建议目标</button>
+        <button class="text danger-text" data-action="delete">删除</button>
       </div>
     </article>
   `;
@@ -804,6 +805,7 @@ function bindNoteActions(container) {
         if (action === "comment") commentNote(noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
+        if (action === "delete") deleteNote(noteId);
         if (action === "suggest-target") {
           $("suggestion-target-type").value = "note";
           $("suggestion-target-id").value = noteId;
@@ -813,6 +815,17 @@ function bindNoteActions(container) {
       });
     });
   });
+}
+
+async function deleteNote(noteId) {
+  if (!window.confirm("确认删除这篇笔记？")) return;
+  try {
+    await api(`/api/notes/${noteId}`, { method: "DELETE" });
+    await Promise.all([loadNotes(), loadTree()]);
+    showToast("笔记已删除");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function renderMistakes() {
@@ -846,6 +859,7 @@ function renderMistakes() {
             <button class="secondary" data-status="todo">待复习</button>
             <button class="secondary" data-status="retry">需再练</button>
             <button class="secondary" data-status="mastered">已掌握</button>
+            <button class="text danger-text" data-action="delete">删除</button>
           </div>
         </article>
       `
@@ -856,7 +870,21 @@ function renderMistakes() {
     item.querySelectorAll("[data-status]").forEach((button) => {
       button.addEventListener("click", () => updateMastery(id, button.dataset.status));
     });
+    item.querySelectorAll("[data-action='delete']").forEach((button) => {
+      button.addEventListener("click", () => deleteMistake(id));
+    });
   });
+}
+
+async function deleteMistake(mistakeId) {
+  if (!window.confirm("确认删除这道错题？")) return;
+  try {
+    await api(`/api/mistakes/${mistakeId}`, { method: "DELETE" });
+    await Promise.all([loadMistakes(), loadTree()]);
+    showToast("错题已删除");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function renderSearchResults(results = []) {

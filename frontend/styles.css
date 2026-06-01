@@ -68,6 +68,10 @@ button.text {
   background: transparent;
 }
 
+button.text.danger-text {
+  color: var(--rose);
+}
+
 button.danger {
   background: var(--rose);
 }

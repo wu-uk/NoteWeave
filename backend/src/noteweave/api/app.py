@@ -499,6 +499,27 @@ def register_routes(app: FastAPI) -> None:
         rows = db.all("SELECT * FROM note_versions WHERE note_id = ? ORDER BY id DESC", (note_id,))
         return [serialize_version(row) for row in rows]
 
+    @app.delete("/api/notes/{note_id}")
+    async def delete_note(
+        note_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        note = get_note(db, note_id)
+        ensure_note_write(db, note, user["id"])
+        delete_attachments_for_target(db, settings, "note", note_id)
+        db.transaction(
+            [
+                ("DELETE FROM comments WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM reactions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM suggestions WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM ai_results WHERE target_type = 'note' AND target_id = ?", (note_id,)),
+                ("DELETE FROM notes WHERE id = ?", (note_id,)),
+            ]
+        )
+        return {"status": "ok"}
+
     @app.post("/api/attachments")
     async def create_attachment(
         payload: AttachmentCreateRequest,
@@ -705,6 +726,27 @@ def register_routes(app: FastAPI) -> None:
             (payload.mastery_status, now_iso(), mistake_id),
         )
         return serialize_mistake(get_mistake(db, mistake_id), db)
+
+    @app.delete("/api/mistakes/{mistake_id}")
+    async def delete_mistake(
+        mistake_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        mistake = get_mistake(db, mistake_id)
+        ensure_owner_or_maintainer(db, int(mistake["course_id"]), int(mistake["author_id"]), user["id"])
+        delete_attachments_for_target(db, settings, "mistake", mistake_id)
+        db.transaction(
+            [
+                ("DELETE FROM comments WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM reactions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM suggestions WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM ai_results WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
+                ("DELETE FROM mistakes WHERE id = ?", (mistake_id,)),
+            ]
+        )
+        return {"status": "ok"}
 
     @app.post("/api/comments")
     async def create_comment(
@@ -1259,6 +1301,25 @@ def serialize_attachment(row: dict[str, Any]) -> dict[str, Any]:
         "uploaded_by": row["uploaded_by"],
         "created_at": row["created_at"],
     }
+
+
+def delete_attachments_for_target(db: Database, settings: Settings, target_type: str, target_id: int) -> None:
+    if target_type == "note":
+        column = "note_id"
+    elif target_type == "mistake":
+        column = "mistake_id"
+    else:
+        raise ValueError(f"unsupported attachment target: {target_type}")
+
+    rows = db.all(f"SELECT id, stored_name FROM attachments WHERE {column} = ?", (target_id,))
+    storage_dir = Path(settings.file_storage_dir)
+    for row in rows:
+        try:
+            (storage_dir / row["stored_name"]).unlink()
+        except FileNotFoundError:
+            pass
+    if rows:
+        db.execute(f"DELETE FROM attachments WHERE {column} = ?", (target_id,))
 
 
 def get_mistake(db: Database, mistake_id: int) -> dict[str, Any]:

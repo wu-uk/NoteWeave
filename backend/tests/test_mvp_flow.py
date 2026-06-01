@@ -267,3 +267,46 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert shared_notes_res.status_code == 200
         assert shared_notes_res.json()[0]["id"] == note_id
+
+        bob_delete_note_res = await client.delete(f"/api/notes/{note_id}", headers=bob)
+        assert bob_delete_note_res.status_code == 403
+
+        temp_note_res = await client.post(
+            "/api/notes",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "node_id": point_id,
+                "title": "Temporary draft",
+                "content_text": "This draft should be deleted.",
+            },
+        )
+        assert temp_note_res.status_code == 200
+        temp_note_id = temp_note_res.json()["id"]
+        delete_temp_note_res = await client.delete(f"/api/notes/{temp_note_id}", headers=alice)
+        assert delete_temp_note_res.status_code == 200
+        deleted_note_res = await client.get(f"/api/notes/{temp_note_id}", headers=alice)
+        assert deleted_note_res.status_code == 404
+
+        temp_mistake_res = await client.post(
+            "/api/mistakes",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "node_id": point_id,
+                "question_content": "Temporary mistake",
+                "visibility": "private",
+            },
+        )
+        assert temp_mistake_res.status_code == 200
+        temp_mistake_id = temp_mistake_res.json()["id"]
+        bob_delete_mistake_res = await client.delete(f"/api/mistakes/{mistake_id}", headers=bob)
+        assert bob_delete_mistake_res.status_code == 403
+        delete_temp_mistake_res = await client.delete(f"/api/mistakes/{temp_mistake_id}", headers=alice)
+        assert delete_temp_mistake_res.status_code == 200
+        mistakes_after_delete_res = await client.get(
+            "/api/mistakes",
+            headers=alice,
+            params={"course_id": course["id"]},
+        )
+        assert temp_mistake_id not in {item["id"] for item in mistakes_after_delete_res.json()}
