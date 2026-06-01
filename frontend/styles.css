@@ -345,6 +345,10 @@ textarea:focus {
   grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
 }
 
+.full-width {
+  grid-column: 1 / -1;
+}
+
 .panel {
   min-width: 0;
   padding: 18px;
@@ -536,6 +540,11 @@ textarea:focus {
 .item.flash {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.audit-item .item-body {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 .item-body {

@@ -16,6 +16,7 @@ const state = {
   mistakes: [],
   suggestions: [],
   members: [],
+  auditLogs: [],
   reviewItems: [],
   paging: {
     notesHasMore: false,
@@ -63,6 +64,7 @@ const refs = {
   suggestionList: $("suggestion-list"),
   courseSettingsForm: $("course-settings-form"),
   memberList: $("member-list"),
+  auditLogList: $("audit-log-list"),
   toast: $("toast")
 };
 
@@ -260,6 +262,7 @@ async function logout() {
   state.mistakes = [];
   state.suggestions = [];
   state.members = [];
+  state.auditLogs = [];
   state.reviewItems = [];
   resetPaging();
   render();
@@ -274,7 +277,7 @@ async function loadCourses() {
       state.courses.find((course) => course.id === state.currentCourse.id) || state.courses[0] || null;
   }
   if (state.currentCourse) {
-    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
   }
 }
 
@@ -302,7 +305,7 @@ async function createCourse() {
     $("course-semester").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((item) => item.id === course.id) || course;
-    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
     showToast("课程已创建");
   } catch (error) {
     showToast(error.message);
@@ -328,7 +331,7 @@ async function joinCourse() {
     $("invite-code").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
-    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
     showToast("已加入课程");
   } catch (error) {
     showToast(error.message);
@@ -341,7 +344,7 @@ async function selectCourse(courseId) {
   state.selectedNode = null;
   state.expandedNodeIds = new Set();
   state.nodeDetail = null;
-  await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+  await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
   render();
 }
 
@@ -376,6 +379,16 @@ async function loadMembers() {
   renderSettings();
 }
 
+async function loadAuditLogs() {
+  if (!state.currentCourse) return;
+  try {
+    state.auditLogs = await api(`/api/courses/${state.currentCourse.id}/audit-logs?limit=20`);
+  } catch {
+    state.auditLogs = [];
+  }
+  renderSettings();
+}
+
 async function updateCourseSettings(event) {
   event.preventDefault();
   if (!requireCourse()) return;
@@ -395,8 +408,7 @@ async function updateCourseSettings(event) {
       })
     });
     state.currentCourse = updated;
-    await loadCourses();
-    await loadTree();
+    await Promise.all([loadCourses(), loadTree(), loadAuditLogs()]);
     render();
     showToast("课程信息已更新");
   } catch (error) {
@@ -411,7 +423,7 @@ async function updateMemberRole(memberId, role) {
       method: "PATCH",
       body: JSON.stringify({ role })
     });
-    await Promise.all([loadCourses(), loadMembers()]);
+    await Promise.all([loadCourses(), loadMembers(), loadAuditLogs()]);
     showToast("成员角色已更新");
   } catch (error) {
     showToast(error.message);
@@ -1391,6 +1403,7 @@ function renderSettings() {
   if (!state.currentCourse) {
     refs.courseSettingsForm.reset();
     refs.memberList.innerHTML = `<div class="meta">选择课程后显示设置</div>`;
+    refs.auditLogList.innerHTML = `<div class="meta">选择课程后显示审计日志</div>`;
     return;
   }
   $("settings-course-name").value = state.currentCourse.name || "";
@@ -1400,11 +1413,10 @@ function renderSettings() {
 
   if (!state.members || state.members.length === 0) {
     refs.memberList.innerHTML = `<div class="meta">暂无成员</div>`;
-    return;
-  }
-  refs.memberList.innerHTML = state.members
-    .map(
-      (member) => `
+  } else {
+    refs.memberList.innerHTML = state.members
+      .map(
+        (member) => `
         <article class="item" data-member-id="${member.id}">
           <strong class="item-title">${escapeHtml(member.display_name || member.username)}</strong>
           <div class="item-meta">#${member.id} · ${escapeHtml(member.username)} · 加入 ${escapeHtml(member.joined_at.slice(0, 10))}</div>
@@ -1418,14 +1430,31 @@ function renderSettings() {
           </div>
         </article>
       `
+      )
+      .join("");
+    refs.memberList.querySelectorAll("[data-member-id]").forEach((item) => {
+      const memberId = Number(item.dataset.memberId);
+      item.querySelector("[data-action='save-role']").addEventListener("click", () => {
+        updateMemberRole(memberId, item.querySelector("[data-role-select]").value);
+      });
+    });
+  }
+
+  if (!state.auditLogs || state.auditLogs.length === 0) {
+    refs.auditLogList.innerHTML = `<div class="meta">暂无审计日志，或当前角色无权查看</div>`;
+    return;
+  }
+  refs.auditLogList.innerHTML = state.auditLogs
+    .map(
+      (log) => `
+        <article class="item audit-item">
+          <strong class="item-title">${escapeHtml(log.action)} · ${escapeHtml(log.target_type)} #${log.target_id}</strong>
+          <div class="item-meta">操作者 #${log.actor_id} · ${escapeHtml(log.created_at.slice(0, 19))}</div>
+          ${Object.keys(log.metadata || {}).length ? `<div class="item-body">${escapeHtml(JSON.stringify(log.metadata))}</div>` : ""}
+        </article>
+      `
     )
     .join("");
-  refs.memberList.querySelectorAll("[data-member-id]").forEach((item) => {
-    const memberId = Number(item.dataset.memberId);
-    item.querySelector("[data-action='save-role']").addEventListener("click", () => {
-      updateMemberRole(memberId, item.querySelector("[data-role-select]").value);
-    });
-  });
 }
 
 boot();
