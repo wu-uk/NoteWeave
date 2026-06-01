@@ -23,6 +23,13 @@ class CourseCreateRequest(BaseModel):
     tags: list[str] = []
 
 
+class CourseUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    semester: str | None = None
+    tags: list[str] | None = None
+
+
 class CourseJoinRequest(BaseModel):
     invite_code: str
 

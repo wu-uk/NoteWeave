@@ -15,6 +15,7 @@ from noteweave.api.schemas import (
     CommentCreateRequest,
     CourseCreateRequest,
     CourseJoinRequest,
+    CourseUpdateRequest,
     KnowledgeNodeCreateRequest,
     KnowledgeNodeMoveRequest,
     KnowledgeNodeUpdateRequest,
@@ -191,6 +192,43 @@ def register_routes(app: FastAPI) -> None:
         ensure_member(db, course_id, user["id"])
         return serialize_course(get_course(db, course_id), db=db, user_id=user["id"])
 
+    @app.patch("/api/courses/{course_id}")
+    async def update_course(
+        course_id: int,
+        payload: CourseUpdateRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        course = get_course(db, course_id)
+        ensure_maintainer(db, course_id, user["id"])
+        data = {
+            "name": payload.name if payload.name is not None else course["name"],
+            "description": payload.description if payload.description is not None else course["description"],
+            "semester": payload.semester if payload.semester is not None else course["semester"],
+            "tags": dumps(payload.tags) if payload.tags is not None else course["tags"],
+        }
+        ts = now_iso()
+        db.transaction(
+            [
+                (
+                    "UPDATE courses SET name = ?, description = ?, semester = ?, tags = ?, updated_at = ? WHERE id = ?",
+                    (data["name"], data["description"], data["semester"], data["tags"], ts, course_id),
+                ),
+                (
+                    """
+                    UPDATE knowledge_nodes
+                    SET title = ?, description = ?, path = ?, updated_at = ?
+                    WHERE course_id = ? AND type = 'course_root'
+                    """,
+                    (data["name"], data["description"], data["name"], ts, course_id),
+                ),
+            ]
+        )
+        root = db.one("SELECT id FROM knowledge_nodes WHERE course_id = ? AND type = 'course_root'", (course_id,))
+        if root:
+            refresh_subtree_paths(db, int(root["id"]))
+        return serialize_course(get_course(db, course_id), db=db, user_id=user["id"])
+
     @app.post("/api/courses/{course_id}/join")
     async def join_course(
         course_id: int,
@@ -238,6 +276,8 @@ def register_routes(app: FastAPI) -> None:
         db: Database = Depends(get_db),
     ):
         ensure_maintainer(db, course_id, user["id"])
+        if not db.one("SELECT 1 FROM course_members WHERE course_id = ? AND user_id = ?", (course_id, member_id)):
+            raise HTTPException(status_code=404, detail="course member not found")
         db.execute(
             "UPDATE course_members SET role = ? WHERE course_id = ? AND user_id = ?",
             (payload.role, course_id, member_id),

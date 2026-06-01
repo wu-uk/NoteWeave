@@ -67,6 +67,7 @@
           <button data-view="mistakes">错题</button>
           <button data-view="search">检索</button>
           <button data-view="collab">协作</button>
+          <button data-view="settings">设置</button>
         </nav>
 
         <section class="view active" id="view-overview">
@@ -265,6 +266,36 @@
                 <button type="submit">提交建议</button>
               </form>
               <div class="item-list" id="suggestion-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="grid two-columns">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h3>课程信息</h3>
+                  <p>维护者可编辑课程基础资料</p>
+                </div>
+              </div>
+              <form class="stack-form" id="course-settings-form">
+                <input id="settings-course-name" placeholder="课程名称" />
+                <input id="settings-course-semester" placeholder="学期" />
+                <textarea id="settings-course-description" placeholder="课程简介"></textarea>
+                <input id="settings-course-tags" placeholder="课程标签，用逗号分隔" />
+                <button type="submit">保存课程信息</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h3>成员权限</h3>
+                  <p>维护者可调整课程内角色</p>
+                </div>
+              </div>
+              <div class="item-list" id="member-list"></div>
             </section>
           </div>
         </section>

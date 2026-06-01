@@ -287,6 +287,34 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert join_res.status_code == 200
         assert join_res.json()["role"] == "student"
 
+        bob_update_course_res = await client.patch(
+            f"/api/courses/{course['id']}",
+            headers=bob,
+            json={"name": "Unauthorized Rename"},
+        )
+        assert bob_update_course_res.status_code == 403
+
+        course_update_res = await client.patch(
+            f"/api/courses/{course['id']}",
+            headers=alice,
+            json={
+                "name": "Advanced Data Structures",
+                "description": "Updated course notes",
+                "semester": "2026 Summer",
+                "tags": ["cs", "review"],
+            },
+        )
+        assert course_update_res.status_code == 200
+        assert course_update_res.json()["name"] == "Advanced Data Structures"
+        assert course_update_res.json()["tags"] == ["cs", "review"]
+
+        renamed_tree_res = await client.get(f"/api/courses/{course['id']}/tree", headers=alice)
+        assert renamed_tree_res.status_code == 200
+        renamed_tree = renamed_tree_res.json()
+        assert renamed_tree["tree"]["title"] == "Advanced Data Structures"
+        renamed_point = next(node for node in renamed_tree["nodes"] if node["id"] == point_id)
+        assert renamed_point["path"].startswith("Advanced Data Structures /")
+
         shared_notes_res = await client.get(
             "/api/notes",
             headers=bob,
@@ -337,3 +365,15 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
             params={"course_id": course["id"]},
         )
         assert temp_mistake_id not in {item["id"] for item in mistakes_after_delete_res.json()}
+
+        members_res = await client.get(f"/api/courses/{course['id']}/members", headers=alice)
+        assert members_res.status_code == 200
+        bob_id = next(member["id"] for member in members_res.json() if member["username"] == "bob")
+        role_update_res = await client.patch(
+            f"/api/courses/{course['id']}/members/{bob_id}",
+            headers=alice,
+            json={"role": "teacher"},
+        )
+        assert role_update_res.status_code == 200
+        updated_members_res = await client.get(f"/api/courses/{course['id']}/members", headers=alice)
+        assert next(member["role"] for member in updated_members_res.json() if member["id"] == bob_id) == "teacher"

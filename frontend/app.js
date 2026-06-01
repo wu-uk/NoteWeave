@@ -11,6 +11,7 @@ const state = {
   notes: [],
   mistakes: [],
   suggestions: [],
+  members: [],
   activeView: "overview"
 };
 
@@ -47,6 +48,8 @@ const refs = {
   sharedNoteList: $("shared-note-list"),
   suggestionForm: $("suggestion-form"),
   suggestionList: $("suggestion-list"),
+  courseSettingsForm: $("course-settings-form"),
+  memberList: $("member-list"),
   toast: $("toast")
 };
 
@@ -165,6 +168,7 @@ function bindEvents() {
   refs.mistakeForm.addEventListener("submit", createMistake);
   refs.searchForm.addEventListener("submit", search);
   refs.suggestionForm.addEventListener("submit", createSuggestion);
+  refs.courseSettingsForm.addEventListener("submit", updateCourseSettings);
 }
 
 async function submitAuth(mode) {
@@ -209,6 +213,8 @@ async function logout() {
   state.selectedNode = null;
   state.notes = [];
   state.mistakes = [];
+  state.suggestions = [];
+  state.members = [];
   render();
 }
 
@@ -221,7 +227,7 @@ async function loadCourses() {
       state.courses.find((course) => course.id === state.currentCourse.id) || state.courses[0] || null;
   }
   if (state.currentCourse) {
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
   }
 }
 
@@ -249,7 +255,7 @@ async function createCourse() {
     $("course-semester").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((item) => item.id === course.id) || course;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
     showToast("课程已创建");
   } catch (error) {
     showToast(error.message);
@@ -275,7 +281,7 @@ async function joinCourse() {
     $("invite-code").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
     showToast("已加入课程");
   } catch (error) {
     showToast(error.message);
@@ -286,7 +292,7 @@ async function joinCourse() {
 async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
-  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
+  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers()]);
   render();
 }
 
@@ -304,6 +310,59 @@ async function loadTree() {
   }
   renderTree();
   renderSelectedNode();
+}
+
+async function loadMembers() {
+  if (!state.currentCourse) return;
+  try {
+    state.members = await api(`/api/courses/${state.currentCourse.id}/members`);
+  } catch (error) {
+    state.members = [];
+    showToast(error.message);
+  }
+  renderSettings();
+}
+
+async function updateCourseSettings(event) {
+  event.preventDefault();
+  if (!requireCourse()) return;
+  const name = $("settings-course-name").value.trim();
+  if (!name) {
+    showToast("课程名称不能为空");
+    return;
+  }
+  try {
+    const updated = await api(`/api/courses/${state.currentCourse.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name,
+        semester: $("settings-course-semester").value.trim(),
+        description: $("settings-course-description").value.trim(),
+        tags: tagsFromInput($("settings-course-tags").value)
+      })
+    });
+    state.currentCourse = updated;
+    await loadCourses();
+    await loadTree();
+    render();
+    showToast("课程信息已更新");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function updateMemberRole(memberId, role) {
+  if (!requireCourse()) return;
+  try {
+    await api(`/api/courses/${state.currentCourse.id}/members/${memberId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role })
+    });
+    await Promise.all([loadCourses(), loadMembers()]);
+    showToast("成员角色已更新");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function createNode(event) {
@@ -639,6 +698,7 @@ function render() {
   renderSharedNotes();
   renderMistakes();
   renderSuggestions();
+  renderSettings();
 }
 
 function renderAuth() {
@@ -944,6 +1004,10 @@ function highlightItem(selector) {
 }
 
 function renderSuggestions() {
+  if (!state.currentCourse) {
+    refs.suggestionList.innerHTML = `<div class="meta">选择课程后显示建议</div>`;
+    return;
+  }
   if (state.suggestions.length === 0) {
     refs.suggestionList.innerHTML = `<div class="meta">暂无建议</div>`;
     return;
@@ -968,6 +1032,47 @@ function renderSuggestions() {
     const id = Number(item.dataset.suggestionId);
     item.querySelectorAll("[data-status]").forEach((button) => {
       button.addEventListener("click", () => handleSuggestion(id, button.dataset.status));
+    });
+  });
+}
+
+function renderSettings() {
+  if (!state.currentCourse) {
+    refs.courseSettingsForm.reset();
+    refs.memberList.innerHTML = `<div class="meta">选择课程后显示设置</div>`;
+    return;
+  }
+  $("settings-course-name").value = state.currentCourse.name || "";
+  $("settings-course-semester").value = state.currentCourse.semester || "";
+  $("settings-course-description").value = state.currentCourse.description || "";
+  $("settings-course-tags").value = (state.currentCourse.tags || []).join(", ");
+
+  if (!state.members || state.members.length === 0) {
+    refs.memberList.innerHTML = `<div class="meta">暂无成员</div>`;
+    return;
+  }
+  refs.memberList.innerHTML = state.members
+    .map(
+      (member) => `
+        <article class="item" data-member-id="${member.id}">
+          <strong class="item-title">${escapeHtml(member.display_name || member.username)}</strong>
+          <div class="item-meta">#${member.id} · ${escapeHtml(member.username)} · 加入 ${escapeHtml(member.joined_at.slice(0, 10))}</div>
+          <div class="row member-role-row">
+            <select data-role-select>
+              <option value="student" ${member.role === "student" ? "selected" : ""}>普通学生</option>
+              <option value="maintainer" ${member.role === "maintainer" ? "selected" : ""}>课程维护者</option>
+              <option value="teacher" ${member.role === "teacher" ? "selected" : ""}>教师/助教</option>
+            </select>
+            <button class="secondary" data-action="save-role" type="button">保存角色</button>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+  refs.memberList.querySelectorAll("[data-member-id]").forEach((item) => {
+    const memberId = Number(item.dataset.memberId);
+    item.querySelector("[data-action='save-role']").addEventListener("click", () => {
+      updateMemberRole(memberId, item.querySelector("[data-role-select]").value);
     });
   });
 }
