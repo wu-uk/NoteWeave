@@ -229,6 +229,15 @@ def register_routes(app: FastAPI) -> None:
         root = db.one("SELECT id FROM knowledge_nodes WHERE course_id = ? AND type = 'course_root'", (course_id,))
         if root:
             refresh_subtree_paths(db, int(root["id"]))
+        log_audit(
+            db,
+            course_id,
+            user["id"],
+            "course.update",
+            "course",
+            course_id,
+            {"fields": [key for key in ["name", "description", "semester", "tags"] if getattr(payload, key) is not None]},
+        )
         return serialize_course(get_course(db, course_id), db=db, user_id=user["id"])
 
     @app.post("/api/courses/{course_id}/join")
@@ -284,7 +293,22 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE course_members SET role = ? WHERE course_id = ? AND user_id = ?",
             (payload.role, course_id, member_id),
         )
+        log_audit(db, course_id, user["id"], "member.role_update", "user", member_id, {"role": payload.role})
         return {"status": "ok"}
+
+    @app.get("/api/courses/{course_id}/audit-logs")
+    async def list_audit_logs(
+        course_id: int,
+        limit: int = Query(default=50, ge=1, le=200),
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        ensure_maintainer(db, course_id, user["id"])
+        rows = db.all(
+            "SELECT * FROM audit_logs WHERE course_id = ? ORDER BY id DESC LIMIT ?",
+            (course_id, limit),
+        )
+        return [serialize_audit_log(row) for row in rows]
 
     @app.get("/api/courses/{course_id}/tree")
     async def get_tree(
@@ -332,6 +356,7 @@ def register_routes(app: FastAPI) -> None:
                 ts,
             ),
         )
+        log_audit(db, course_id, user["id"], "node.create", "knowledge_node", node_id, {"type": payload.type})
         return serialize_node(get_node(db, node_id), db)
 
     @app.get("/api/tree/nodes/{node_id}/detail")
@@ -366,6 +391,7 @@ def register_routes(app: FastAPI) -> None:
             (title, description, dumps(metadata), order_index, now_iso(), node_id),
         )
         refresh_subtree_paths(db, node_id)
+        log_audit(db, int(node["course_id"]), user["id"], "node.update", "knowledge_node", node_id, {"title": title})
         return serialize_node(get_node(db, node_id), db)
 
     @app.post("/api/tree/nodes/{node_id}/move")
@@ -387,6 +413,15 @@ def register_routes(app: FastAPI) -> None:
             (parent["id"], payload.order_index, now_iso(), node_id),
         )
         refresh_subtree_paths(db, node_id)
+        log_audit(
+            db,
+            int(node["course_id"]),
+            user["id"],
+            "node.move",
+            "knowledge_node",
+            node_id,
+            {"parent_id": parent["id"], "order_index": payload.order_index},
+        )
         return serialize_node(get_node(db, node_id), db)
 
     @app.delete("/api/tree/nodes/{node_id}")
@@ -402,6 +437,7 @@ def register_routes(app: FastAPI) -> None:
         counts = node_content_counts(db, node_id)
         if counts["note_count"] or counts["mistake_count"]:
             raise HTTPException(status_code=409, detail={"message": "node has content", "counts": counts})
+        log_audit(db, int(node["course_id"]), user["id"], "node.delete", "knowledge_node", node_id, {"title": node["title"]})
         db.execute("DELETE FROM knowledge_nodes WHERE id = ?", (node_id,))
         return {"status": "ok"}
 
@@ -438,6 +474,7 @@ def register_routes(app: FastAPI) -> None:
         )
         create_note_version(db, note_id, user["id"], "initial")
         refresh_note_search_chunk(db, note_id)
+        log_audit(db, payload.course_id, user["id"], "note.create", "note", note_id, {"visibility": payload.visibility})
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes")
@@ -523,6 +560,7 @@ def register_routes(app: FastAPI) -> None:
         )
         create_note_version(db, note_id, user["id"], "manual update")
         refresh_note_search_chunk(db, note_id)
+        log_audit(db, int(note["course_id"]), user["id"], "note.update", "note", note_id)
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.post("/api/notes/{note_id}/publish")
@@ -539,6 +577,7 @@ def register_routes(app: FastAPI) -> None:
         )
         create_note_version(db, note_id, user["id"], "publish")
         refresh_note_search_chunk(db, note_id)
+        log_audit(db, int(note["course_id"]), user["id"], "note.publish", "note", note_id)
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
 
     @app.get("/api/notes/{note_id}/versions")
@@ -562,6 +601,7 @@ def register_routes(app: FastAPI) -> None:
         note = get_note(db, note_id)
         ensure_note_write(db, note, user["id"])
         delete_attachments_for_target(db, settings, "note", note_id)
+        log_audit(db, int(note["course_id"]), user["id"], "note.delete", "note", note_id, {"title": note["title"]})
         db.transaction(
             [
                 ("DELETE FROM comments WHERE target_type = 'note' AND target_id = ?", (note_id,)),
@@ -697,6 +737,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         refresh_mistake_search_chunk(db, mistake_id)
+        log_audit(db, payload.course_id, user["id"], "mistake.create", "mistake", mistake_id, {"visibility": payload.visibility})
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.get("/api/mistakes")
@@ -767,6 +808,7 @@ def register_routes(app: FastAPI) -> None:
             ),
         )
         refresh_mistake_search_chunk(db, mistake_id)
+        log_audit(db, int(mistake["course_id"]), user["id"], "mistake.update", "mistake", mistake_id)
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.patch("/api/mistakes/{mistake_id}/mastery")
@@ -783,6 +825,7 @@ def register_routes(app: FastAPI) -> None:
             (payload.mastery_status, now_iso(), mistake_id),
         )
         refresh_mistake_search_chunk(db, mistake_id)
+        log_audit(db, int(mistake["course_id"]), user["id"], "mistake.mastery_update", "mistake", mistake_id, {"mastery_status": payload.mastery_status})
         return serialize_mistake(get_mistake(db, mistake_id), db, user_id=user["id"])
 
     @app.delete("/api/mistakes/{mistake_id}")
@@ -795,6 +838,7 @@ def register_routes(app: FastAPI) -> None:
         mistake = get_mistake(db, mistake_id)
         ensure_owner_or_maintainer(db, int(mistake["course_id"]), int(mistake["author_id"]), user["id"])
         delete_attachments_for_target(db, settings, "mistake", mistake_id)
+        log_audit(db, int(mistake["course_id"]), user["id"], "mistake.delete", "mistake", mistake_id)
         db.transaction(
             [
                 ("DELETE FROM comments WHERE target_type = 'mistake' AND target_id = ?", (mistake_id,)),
@@ -1000,6 +1044,15 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE suggestions SET status = ?, handler_id = ?, handled_at = ? WHERE id = ?",
             (payload.status, user["id"], now_iso(), suggestion_id),
         )
+        log_audit(
+            db,
+            course_id,
+            user["id"],
+            f"suggestion.{payload.status}",
+            "suggestion",
+            suggestion_id,
+            {"target_type": suggestion["target_type"], "target_id": suggestion["target_id"]},
+        )
         return serialize_suggestion(get_suggestion(db, suggestion_id))
 
     @app.get("/api/search")
@@ -1123,6 +1176,7 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE ai_results SET status = 'accepted', result = ?, accepted_by = ?, accepted_at = ? WHERE id = ?",
             (dumps(result_payload), user["id"], now_iso(), result_id),
         )
+        log_audit(db, int(note["course_id"]), user["id"], "ai.accept", "ai_result", result_id, {"task_type": result["task_type"]})
         return serialize_ai_result(get_ai_result(db, result_id))
 
     @app.post("/api/ai/results/{result_id}/reject")
@@ -1140,6 +1194,7 @@ def register_routes(app: FastAPI) -> None:
             "UPDATE ai_results SET status = 'rejected', accepted_by = ?, accepted_at = ? WHERE id = ?",
             (user["id"], now_iso(), result_id),
         )
+        log_audit(db, int(note["course_id"]), user["id"], "ai.reject", "ai_result", result_id, {"task_type": result["task_type"]})
         return serialize_ai_result(get_ai_result(db, result_id))
 
 
@@ -1194,6 +1249,37 @@ def serialize_user(row: dict[str, Any]) -> dict[str, Any]:
         "username": row["username"],
         "display_name": row["display_name"],
         "system_role": row["system_role"],
+        "created_at": row["created_at"],
+    }
+
+
+def log_audit(
+    db: Database,
+    course_id: int,
+    actor_id: int,
+    action: str,
+    target_type: str,
+    target_id: int,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO audit_logs (course_id, actor_id, action, target_type, target_id, metadata, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (course_id, actor_id, action, target_type, target_id, dumps(metadata or {}), now_iso()),
+    )
+
+
+def serialize_audit_log(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "course_id": row["course_id"],
+        "actor_id": row["actor_id"],
+        "action": row["action"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "metadata": loads(row["metadata"], {}),
         "created_at": row["created_at"],
     }
 

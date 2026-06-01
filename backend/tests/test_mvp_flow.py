@@ -607,6 +607,9 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert temp_mistake_id not in {item["id"] for item in mistakes_after_delete_res.json()}
 
+        bob_audit_res = await client.get(f"/api/courses/{course['id']}/audit-logs", headers=bob)
+        assert bob_audit_res.status_code == 403
+
         members_res = await client.get(f"/api/courses/{course['id']}/members", headers=alice)
         assert members_res.status_code == 200
         bob_id = next(member["id"] for member in members_res.json() if member["username"] == "bob")
@@ -618,3 +621,23 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert role_update_res.status_code == 200
         updated_members_res = await client.get(f"/api/courses/{course['id']}/members", headers=alice)
         assert next(member["role"] for member in updated_members_res.json() if member["id"] == bob_id) == "teacher"
+
+        audit_res = await client.get(f"/api/courses/{course['id']}/audit-logs", headers=alice)
+        assert audit_res.status_code == 200
+        audit_logs = audit_res.json()
+        audit_actions = {item["action"] for item in audit_logs}
+        assert {
+            "course.update",
+            "note.publish",
+            "note.delete",
+            "mistake.delete",
+            "suggestion.accepted",
+            "ai.accept",
+            "ai.reject",
+            "member.role_update",
+        }.issubset(audit_actions)
+        member_audit = next(item for item in audit_logs if item["action"] == "member.role_update")
+        assert member_audit["actor_id"] == alice_id
+        assert member_audit["target_type"] == "user"
+        assert member_audit["target_id"] == bob_id
+        assert member_audit["metadata"]["role"] == "teacher"
