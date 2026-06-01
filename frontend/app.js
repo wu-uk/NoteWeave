@@ -219,7 +219,7 @@ async function loadCourses() {
       state.courses.find((course) => course.id === state.currentCourse.id) || state.courses[0] || null;
   }
   if (state.currentCourse) {
-    await Promise.all([loadTree(), loadNotes(), loadMistakes()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
   }
 }
 
@@ -247,7 +247,7 @@ async function createCourse() {
     $("course-semester").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((item) => item.id === course.id) || course;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
     showToast("课程已创建");
   } catch (error) {
     showToast(error.message);
@@ -273,7 +273,7 @@ async function joinCourse() {
     $("invite-code").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes()]);
+    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
     showToast("已加入课程");
   } catch (error) {
     showToast(error.message);
@@ -284,7 +284,7 @@ async function joinCourse() {
 async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
-  await Promise.all([loadTree(), loadNotes(), loadMistakes()]);
+  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions()]);
   render();
 }
 
@@ -526,23 +526,31 @@ async function createSuggestion(event) {
         content
       })
     });
-    state.suggestions.unshift(suggestion);
     refs.suggestionForm.reset();
-    renderSuggestions();
+    await loadSuggestions();
     showToast("建议已提交");
   } catch (error) {
     showToast(error.message);
   }
 }
 
+async function loadSuggestions() {
+  if (!state.currentCourse) return;
+  try {
+    state.suggestions = await api(`/api/courses/${state.currentCourse.id}/suggestions`);
+  } catch (error) {
+    showToast(error.message);
+  }
+  renderSuggestions();
+}
+
 async function handleSuggestion(id, status) {
   try {
-    const updated = await api(`/api/suggestions/${id}`, {
+    await api(`/api/suggestions/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ status })
     });
-    state.suggestions = state.suggestions.map((item) => (item.id === id ? updated : item));
-    renderSuggestions();
+    await loadSuggestions();
     showToast("建议状态已更新");
   } catch (error) {
     showToast(error.message);
@@ -816,7 +824,7 @@ function renderSearchResults(results = []) {
 
 function renderSuggestions() {
   if (state.suggestions.length === 0) {
-    refs.suggestionList.innerHTML = `<div class="meta">本次会话暂无建议</div>`;
+    refs.suggestionList.innerHTML = `<div class="meta">暂无建议</div>`;
     return;
   }
   refs.suggestionList.innerHTML = state.suggestions
@@ -824,7 +832,7 @@ function renderSuggestions() {
       (suggestion) => `
         <article class="item" data-suggestion-id="${suggestion.id}">
           <strong class="item-title">#${suggestion.id} ${escapeHtml(suggestion.type)} · ${escapeHtml(suggestion.status)}</strong>
-          <div class="item-meta">${escapeHtml(suggestion.target_type)} #${suggestion.target_id}</div>
+          <div class="item-meta">${escapeHtml(suggestion.target_type)} #${suggestion.target_id} · ${escapeHtml(suggestion.target_title || "未命名目标")}</div>
           <div class="item-body">${escapeHtml(suggestion.content)}</div>
           <div class="item-actions">
             <button class="secondary" data-status="accepted">采纳</button>

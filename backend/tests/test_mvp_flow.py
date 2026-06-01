@@ -97,6 +97,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         summary_res = await client.post(f"/api/ai/notes/{note_id}/summary", headers=alice)
         assert summary_res.status_code == 200
         summary_id = summary_res.json()["id"]
+        assert summary_res.json()["result"]["source"] == "fallback"
         accept_summary_res = await client.post(
             f"/api/ai/results/{summary_id}/accept", headers=alice
         )
@@ -105,6 +106,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
 
         tags_res = await client.post(f"/api/ai/notes/{note_id}/tags", headers=alice)
         assert tags_res.status_code == 200
+        assert tags_res.json()["result"]["source"] == "fallback"
         accept_tags_res = await client.post(
             f"/api/ai/results/{tags_res.json()['id']}/accept", headers=alice
         )
@@ -179,6 +181,14 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert handle_res.status_code == 200
         assert handle_res.json()["status"] == "accepted"
+
+        suggestions_res = await client.get(
+            f"/api/courses/{course['id']}/suggestions", headers=alice
+        )
+        assert suggestions_res.status_code == 200
+        suggestions = suggestions_res.json()
+        assert suggestions[0]["status"] == "accepted"
+        assert suggestions[0]["target_title"] == "Quick sort complexity"
 
         search_res = await client.get(
             "/api/search",

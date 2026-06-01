@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import secrets
 import sqlite3
 from typing import Any
@@ -27,6 +26,7 @@ from noteweave.api.schemas import (
     SuggestionCreateRequest,
     SuggestionHandleRequest,
 )
+from noteweave.core.ai import AIAssistService
 from noteweave.core.database import Database, dumps, loads, now_iso
 from noteweave.core.security import hash_password, new_token, verify_password
 from noteweave.core.settings import Settings
@@ -693,6 +693,27 @@ def register_routes(app: FastAPI) -> None:
         )
         return serialize_suggestion(get_suggestion(db, suggestion_id))
 
+    @app.get("/api/courses/{course_id}/suggestions")
+    async def list_suggestions(
+        course_id: int,
+        status: str | None = None,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        ensure_member(db, course_id, user["id"])
+        rows = db.all("SELECT * FROM suggestions ORDER BY created_at DESC")
+        suggestions = []
+        for row in rows:
+            if status and row["status"] != status:
+                continue
+            try:
+                if target_course_id(db, row["target_type"], int(row["target_id"])) != course_id:
+                    continue
+            except HTTPException:
+                continue
+            suggestions.append(serialize_suggestion(row, db=db))
+        return suggestions
+
     @app.patch("/api/suggestions/{suggestion_id}")
     async def handle_suggestion(
         suggestion_id: int,
@@ -749,22 +770,42 @@ def register_routes(app: FastAPI) -> None:
         note_id: int,
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
     ):
         note = get_note(db, note_id)
         ensure_note_access(db, note, user["id"])
-        summary = fallback_summary(note["content_text"])
-        return create_ai_result(db, "note", note_id, "summary", {"summary": summary}, user["id"])
+        output = await AIAssistService(settings).summarize_note(note["title"], note["content_text"])
+        return create_ai_result(
+            db,
+            "note",
+            note_id,
+            "summary",
+            output.result,
+            user["id"],
+            status="generated",
+            error=output.error,
+        )
 
     @app.post("/api/ai/notes/{note_id}/tags")
     async def generate_tags(
         note_id: int,
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
     ):
         note = get_note(db, note_id)
         ensure_note_access(db, note, user["id"])
-        tags = fallback_tags(f"{note['title']} {note['content_text']}")
-        return create_ai_result(db, "note", note_id, "tags", {"tags": tags}, user["id"])
+        output = await AIAssistService(settings).extract_tags(note["title"], note["content_text"])
+        return create_ai_result(
+            db,
+            "note",
+            note_id,
+            "tags",
+            output.result,
+            user["id"],
+            status="generated",
+            error=output.error,
+        )
 
     @app.get("/api/ai/results/{result_id}")
     async def ai_result_detail(
@@ -802,6 +843,10 @@ def register_routes(app: FastAPI) -> None:
 
 async def get_db(request: Request) -> Database:
     return request.app.state.db
+
+
+async def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
 
 
 async def get_bearer_token(authorization: str | None = Header(default=None)) -> str:
@@ -1159,8 +1204,8 @@ def get_suggestion(db: Database, suggestion_id: int) -> dict[str, Any]:
     return row
 
 
-def serialize_suggestion(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+def serialize_suggestion(row: dict[str, Any], db: Database | None = None) -> dict[str, Any]:
+    data = {
         "id": row["id"],
         "target_type": row["target_type"],
         "target_id": row["target_id"],
@@ -1172,6 +1217,22 @@ def serialize_suggestion(row: dict[str, Any]) -> dict[str, Any]:
         "handled_at": row["handled_at"],
         "created_at": row["created_at"],
     }
+    if db is not None:
+        data["target_title"] = target_title(db, row["target_type"], int(row["target_id"]))
+    return data
+
+
+def target_title(db: Database, target_type: str, target_id: int) -> str:
+    if target_type == "note":
+        return get_note(db, target_id)["title"]
+    if target_type == "mistake":
+        return get_mistake(db, target_id)["question_content"][:80]
+    if target_type == "knowledge_node":
+        return get_node(db, target_id)["title"]
+    if target_type == "suggestion":
+        suggestion = get_suggestion(db, target_id)
+        return target_title(db, suggestion["target_type"], int(suggestion["target_id"]))
+    return ""
 
 
 def target_course_id(db: Database, target_type: str, target_id: int) -> int:
@@ -1282,25 +1343,6 @@ def make_snippet(text: str, query: str, width: int = 160) -> str:
     return f"{prefix}{haystack[start:end]}{suffix}"
 
 
-def fallback_summary(content: str) -> str:
-    content = re.sub(r"\s+", " ", content or "").strip()
-    if not content:
-        return "暂无可摘要内容。"
-    return content[:240] + ("..." if len(content) > 240 else "")
-
-
-def fallback_tags(content: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", content or "")
-    seen: list[str] = []
-    for token in tokens:
-        token = token.strip().lower()
-        if token and token not in seen:
-            seen.append(token)
-        if len(seen) >= 8:
-            break
-    return seen
-
-
 def create_ai_result(
     db: Database,
     target_type: str,
@@ -1308,13 +1350,15 @@ def create_ai_result(
     task_type: str,
     result: dict[str, Any],
     user_id: int,
+    status: str = "generated",
+    error: str = "",
 ) -> dict[str, Any]:
     result_id = db.execute(
         """
-        INSERT INTO ai_results (target_type, target_id, task_type, status, result, created_by, created_at)
-        VALUES (?, ?, ?, 'generated', ?, ?, ?)
+        INSERT INTO ai_results (target_type, target_id, task_type, status, result, error, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (target_type, target_id, task_type, dumps(result), user_id, now_iso()),
+        (target_type, target_id, task_type, status, dumps(result), error, user_id, now_iso()),
     )
     return serialize_ai_result(get_ai_result(db, result_id))
 
