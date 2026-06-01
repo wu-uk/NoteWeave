@@ -17,6 +17,7 @@ const state = {
   suggestions: [],
   members: [],
   auditLogs: [],
+  aiStatus: null,
   reviewItems: [],
   paging: {
     notesHasMore: false,
@@ -65,6 +66,7 @@ const refs = {
   suggestionList: $("suggestion-list"),
   courseSettingsForm: $("course-settings-form"),
   memberList: $("member-list"),
+  aiStatusPanel: $("ai-status-panel"),
   auditLogList: $("audit-log-list"),
   toast: $("toast")
 };
@@ -170,6 +172,7 @@ async function boot() {
   if (state.token) {
     try {
       state.user = await api("/api/auth/me");
+      await loadAiStatus();
       await loadCourses();
     } catch (error) {
       setToken("");
@@ -237,6 +240,7 @@ async function submitAuth(mode) {
     });
     setToken(data.token);
     state.user = data.user;
+    await loadAiStatus();
     await loadCourses();
     showToast(mode === "register" ? "注册成功" : "登录成功");
   } catch (error) {
@@ -265,9 +269,20 @@ async function logout() {
   state.suggestions = [];
   state.members = [];
   state.auditLogs = [];
+  state.aiStatus = null;
   state.reviewItems = [];
   resetPaging();
   render();
+}
+
+async function loadAiStatus() {
+  if (!state.token) return;
+  try {
+    state.aiStatus = await api("/api/ai/config/status");
+  } catch {
+    state.aiStatus = null;
+  }
+  renderSettings();
 }
 
 async function editProfile() {
@@ -1426,6 +1441,7 @@ function renderSettings() {
   if (!state.currentCourse) {
     refs.courseSettingsForm.reset();
     refs.memberList.innerHTML = `<div class="meta">选择课程后显示设置</div>`;
+    refs.aiStatusPanel.innerHTML = `<div class="meta">登录后显示 AI 配置状态</div>`;
     refs.auditLogList.innerHTML = `<div class="meta">选择课程后显示审计日志</div>`;
     return;
   }
@@ -1463,6 +1479,7 @@ function renderSettings() {
     });
   }
 
+  refs.aiStatusPanel.innerHTML = renderAiStatusPanel();
   if (!state.auditLogs || state.auditLogs.length === 0) {
     refs.auditLogList.innerHTML = `<div class="meta">暂无审计日志，或当前角色无权查看</div>`;
     return;
@@ -1478,6 +1495,20 @@ function renderSettings() {
       `
     )
     .join("");
+}
+
+function renderAiStatusPanel() {
+  const status = state.aiStatus;
+  if (!status) {
+    return `<div class="meta">暂未获取 AI 配置状态</div>`;
+  }
+  return `
+    <article class="item">
+      <strong class="item-title">${status.enabled ? "AI 已启用" : "AI 已关闭"} · ${status.remote_configured ? "远程模型已配置" : "使用本地降级"}</strong>
+      <div class="item-meta">模型：${escapeHtml(status.chat_model || "未配置")} · Base URL：${status.base_url_configured ? "已配置" : "未配置"} · API Key：${status.api_key_configured ? "已配置" : "未配置"}</div>
+      <div class="item-body">本地摘要和标签降级：${status.fallback_available ? "可用" : "不可用"}</div>
+    </article>
+  `;
 }
 
 boot();

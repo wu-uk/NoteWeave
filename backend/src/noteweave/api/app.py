@@ -116,6 +116,21 @@ def register_routes(app: FastAPI) -> None:
         db.execute("UPDATE users SET display_name = ? WHERE id = ?", (payload.display_name, user["id"]))
         return serialize_user(get_user(db, int(user["id"])))
 
+    @app.get("/api/ai/config/status")
+    async def ai_config_status(
+        user: dict[str, Any] = Depends(current_user),
+        settings: Settings = Depends(get_settings),
+    ):
+        return {
+            "enabled": settings.enable_ai,
+            "remote_configured": bool(settings.model_base_url and settings.model_api_key and settings.chat_model),
+            "model_configured": bool(settings.chat_model),
+            "base_url_configured": bool(settings.model_base_url),
+            "api_key_configured": bool(settings.model_api_key),
+            "chat_model": settings.chat_model or "",
+            "fallback_available": True,
+        }
+
     @app.post("/api/courses")
     async def create_course(
         payload: CourseCreateRequest,

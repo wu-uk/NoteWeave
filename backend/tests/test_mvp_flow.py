@@ -48,6 +48,14 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert me_res.status_code == 200
         assert me_res.json()["display_name"] == "Alice Cooper"
 
+        ai_status_res = await client.get("/api/ai/config/status", headers=alice)
+        assert ai_status_res.status_code == 200
+        ai_status = ai_status_res.json()
+        assert ai_status["enabled"] is True
+        assert ai_status["remote_configured"] is False
+        assert ai_status["fallback_available"] is True
+        assert "model_api_key" not in ai_status
+
         course_res = await client.post(
             "/api/courses",
             headers=alice,
