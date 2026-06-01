@@ -16,6 +16,13 @@ print("<safe>")
 $$
 a^2 + b^2 = c^2
 $$
+
+\`\`\`mindmap
+排序
+  快速排序
+    分区
+  归并排序
+\`\`\`
 `);
 
 assert.match(html, /<h1>标题<\/h1>/);
@@ -26,6 +33,9 @@ assert.match(html, /<li>列表项<\/li>/);
 assert.match(html, /print\(&quot;&lt;safe&gt;&quot;\)/);
 assert.match(html, /<img src="\/api\/files\/example.png" alt="图" \/>/);
 assert.match(html, /class="math-block">a\^2 \+ b\^2 = c\^2<\/div>/);
+assert.match(html, /<div class="mindmap">/);
+assert.match(html, /<span>快速排序<\/span>/);
+assert.match(html, /<span>分区<\/span>/);
 
 const unsafeHtml = renderMarkdown(`<img src=x onerror=alert(1)>
 [bad](javascript:alert(1))`);

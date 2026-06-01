@@ -58,6 +58,52 @@
     return `<p>${renderInline(lines.join("\n")).replace(/\n/g, "<br />")}</p>`;
   }
 
+  function normalizeMindMapLine(line) {
+    return line
+      .replace(/^\s*[-*]\s+/, "")
+      .replace(/^\s+/, "")
+      .trim();
+  }
+
+  function renderMindMap(source) {
+    const rows = String(source || "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => ({
+        indent: (line.match(/^\s*/) || [""])[0].replace(/\t/g, "  ").length,
+        text: normalizeMindMapLine(line)
+      }))
+      .filter((row) => row.text);
+    if (!rows.length) return "";
+
+    let html = '<div class="mindmap"><ul>';
+    const stack = [rows[0].indent];
+    rows.forEach((row, index) => {
+      if (index === 0) {
+        html += `<li><span>${renderInline(row.text)}</span>`;
+        return;
+      }
+      const previous = rows[index - 1];
+      if (row.indent > previous.indent) {
+        stack.push(row.indent);
+        html += "<ul>";
+      } else {
+        html += "</li>";
+        while (stack.length > 1 && row.indent < stack[stack.length - 1]) {
+          stack.pop();
+          html += "</ul></li>";
+        }
+      }
+      html += `<li><span>${renderInline(row.text)}</span>`;
+    });
+    while (stack.length > 1) {
+      stack.pop();
+      html += "</li></ul>";
+    }
+    html += "</li></ul></div>";
+    return html;
+  }
+
   function isBlockStart(line) {
     return /^(#{1,3})\s+/.test(line)
       || /^>\s?/.test(line)
@@ -144,15 +190,23 @@
     let match;
     while ((match = fencePattern.exec(source)) !== null) {
       parts.push(renderTextBlocks(source.slice(cursor, match.index)));
-      const lang = match[1] ? ` language-${escapeHtml(match[1])}` : "";
-      parts.push(`<pre><code class="${lang.trim()}">${escapeHtml(match[2].replace(/\n$/, ""))}</code></pre>`);
+      const language = (match[1] || "").toLowerCase();
+      const body = match[2].replace(/\n$/, "");
+      if (language === "mindmap") {
+        parts.push(renderMindMap(body));
+      } else if (language === "mermaid" && body.trimStart().startsWith("mindmap")) {
+        parts.push(renderMindMap(body.replace(/^\s*mindmap\s*\n?/, "")));
+      } else {
+        const lang = match[1] ? ` language-${escapeHtml(match[1])}` : "";
+        parts.push(`<pre><code class="${lang.trim()}">${escapeHtml(body)}</code></pre>`);
+      }
       cursor = match.index + match[0].length;
     }
     parts.push(renderTextBlocks(source.slice(cursor)));
     return parts.join("");
   }
 
-  const api = { escapeHtml, renderInline, renderMarkdown, sanitizeUrl };
+  const api = { escapeHtml, renderInline, renderMarkdown, renderMindMap, sanitizeUrl };
   root.NoteWeaveRender = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : window);

@@ -210,6 +210,8 @@ function bindEvents() {
   $("mistake-filter-mastery").addEventListener("change", renderMistakes);
   $("note-image-button").addEventListener("click", () => uploadImage("note"));
   $("mistake-image-button").addEventListener("click", () => uploadImage("mistake"));
+  $("note-mindmap-button").addEventListener("click", () => insertMindMap("note"));
+  $("mistake-mindmap-button").addEventListener("click", () => insertMindMap("mistake"));
   refs.nodeForm.addEventListener("submit", createNode);
   refs.noteForm.addEventListener("submit", createNote);
   refs.mistakeForm.addEventListener("submit", createMistake);
@@ -663,6 +665,15 @@ function appendMarkdown(textInput, markdown) {
   const prefix = textInput.value.trimEnd();
   textInput.value = prefix ? `${prefix}\n\n${markdown}\n` : `${markdown}\n`;
   textInput.focus();
+}
+
+function insertMindMap(target) {
+  const textInput = $(target === "note" ? "note-content" : "mistake-question");
+  appendMarkdown(
+    textInput,
+    "```mindmap\n核心概念\n  分支一\n    要点 A\n  分支二\n    要点 B\n```"
+  );
+  showToast("思维导图模板已插入");
 }
 
 async function publishNote(noteId) {

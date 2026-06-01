@@ -676,6 +676,59 @@ textarea:focus {
   white-space: pre-wrap;
 }
 
+.mindmap {
+  overflow: auto;
+  margin: 10px 0;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.mindmap ul {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.mindmap > ul {
+  padding-left: 0;
+}
+
+.mindmap li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mindmap li::before {
+  position: absolute;
+  top: 14px;
+  left: -14px;
+  width: 12px;
+  border-top: 1px solid #c7d2fe;
+  content: "";
+}
+
+.mindmap > ul > li::before {
+  display: none;
+}
+
+.mindmap span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: #1e293b;
+  background: #fff;
+  white-space: nowrap;
+}
+
 .item-actions {
   display: flex;
   flex-wrap: wrap;
