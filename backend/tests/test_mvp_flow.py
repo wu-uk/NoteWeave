@@ -137,6 +137,22 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert publish_res.status_code == 200
         assert publish_res.json()["visibility"] == "shared"
 
+        popular_note_res = await client.post(
+            "/api/notes",
+            headers=alice,
+            json={
+                "course_id": course["id"],
+                "node_id": point_id,
+                "title": "Popular sorting note",
+                "content_text": "A short shared sorting note.",
+                "visibility": "shared",
+                "status": "published",
+                "tags": ["sorting"],
+            },
+        )
+        assert popular_note_res.status_code == 200
+        popular_note_id = popular_note_res.json()["id"]
+
         summary_res = await client.post(f"/api/ai/notes/{note_id}/summary", headers=alice)
         assert summary_res.status_code == 200
         summary_id = summary_res.json()["id"]
@@ -176,6 +192,37 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
             },
         )
         assert reaction_res.status_code == 200
+
+        popular_reaction_res = await client.post(
+            "/api/reactions",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": popular_note_id,
+                "reaction_type": "like",
+            },
+        )
+        assert popular_reaction_res.status_code == 200
+        popular_comment_res = await client.post(
+            "/api/comments",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": popular_note_id,
+                "content": "Extra discussion.",
+            },
+        )
+        assert popular_comment_res.status_code == 200
+        popular_second_comment_res = await client.post(
+            "/api/comments",
+            headers=alice,
+            json={
+                "target_type": "note",
+                "target_id": popular_note_id,
+                "content": "Another discussion point.",
+            },
+        )
+        assert popular_second_comment_res.status_code == 200
 
         favorite_note_res = await client.post(
             "/api/reactions",
@@ -280,8 +327,9 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert scoped_search_res.status_code == 200
         scoped_results = scoped_search_res.json()
-        assert [item["source_type"] for item in scoped_results] == ["note"]
-        assert scoped_results[0]["node_id"] == point_id
+        assert {item["source_type"] for item in scoped_results} == {"note"}
+        assert all(item["node_id"] == point_id for item in scoped_results)
+        assert note_id in {item["source_id"] for item in scoped_results}
 
         missing_author_search_res = await client.get(
             "/api/search",
@@ -358,6 +406,29 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert review_after_cancel_res.status_code == 200
         assert {item["source_type"] for item in review_after_cancel_res.json()} == {"mistake"}
+
+        shared_by_likes_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"], "shared_only": True, "sort": "likes"},
+        )
+        assert shared_by_likes_res.status_code == 200
+        assert [item["id"] for item in shared_by_likes_res.json()[:2]] == [popular_note_id, note_id]
+
+        shared_by_comments_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"], "shared_only": True, "sort": "comments"},
+        )
+        assert shared_by_comments_res.status_code == 200
+        assert [item["id"] for item in shared_by_comments_res.json()[:2]] == [popular_note_id, note_id]
+
+        invalid_sort_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"], "sort": "unknown"},
+        )
+        assert invalid_sort_res.status_code == 400
 
         bob_res = await client.post(
             "/api/auth/register",

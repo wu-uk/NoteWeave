@@ -442,10 +442,18 @@ def register_routes(app: FastAPI) -> None:
         course_id: int,
         node_id: int | None = None,
         shared_only: bool = False,
+        sort: str = "updated",
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
         ensure_member(db, course_id, user["id"])
+        sort_columns = {
+            "updated": "updated_at DESC",
+            "likes": "like_count DESC, updated_at DESC",
+            "comments": "comment_count DESC, updated_at DESC",
+        }
+        if sort not in sort_columns:
+            raise HTTPException(status_code=400, detail="unsupported note sort")
         clauses = ["course_id = ?"]
         params: list[Any] = [course_id]
         if node_id is not None:
@@ -457,7 +465,7 @@ def register_routes(app: FastAPI) -> None:
             clauses.append("(visibility = 'shared' OR author_id = ?)")
             params.append(user["id"])
         rows = db.all(
-            f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC",
+            f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY {sort_columns[sort]}",
             tuple(params),
         )
         return [serialize_note(row, db, user_id=user["id"]) for row in rows]

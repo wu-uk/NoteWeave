@@ -9,6 +9,7 @@ const state = {
   tree: null,
   selectedNode: null,
   notes: [],
+  sharedNotes: [],
   mistakes: [],
   suggestions: [],
   members: [],
@@ -161,6 +162,8 @@ function bindEvents() {
   refs.tabs.addEventListener("click", onTabClick);
   $("refresh-tree-button").addEventListener("click", loadTree);
   $("refresh-notes-button").addEventListener("click", loadNotes);
+  $("refresh-shared-notes-button").addEventListener("click", loadSharedNotes);
+  $("shared-note-sort").addEventListener("change", loadSharedNotes);
   $("refresh-mistakes-button").addEventListener("click", loadMistakes);
   $("refresh-review-button").addEventListener("click", () => loadReview());
   $("mistake-filter-tag").addEventListener("input", renderMistakes);
@@ -220,6 +223,7 @@ async function logout() {
   state.tree = null;
   state.selectedNode = null;
   state.notes = [];
+  state.sharedNotes = [];
   state.mistakes = [];
   state.suggestions = [];
   state.members = [];
@@ -236,7 +240,7 @@ async function loadCourses() {
       state.courses.find((course) => course.id === state.currentCourse.id) || state.courses[0] || null;
   }
   if (state.currentCourse) {
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   }
 }
 
@@ -264,7 +268,7 @@ async function createCourse() {
     $("course-semester").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((item) => item.id === course.id) || course;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
     showToast("课程已创建");
   } catch (error) {
     showToast(error.message);
@@ -290,7 +294,7 @@ async function joinCourse() {
     $("invite-code").value = "";
     await loadCourses();
     state.currentCourse = state.courses.find((course) => course.id === joined.id) || joined;
-    await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+    await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
     showToast("已加入课程");
   } catch (error) {
     showToast(error.message);
@@ -301,7 +305,7 @@ async function joinCourse() {
 async function selectCourse(courseId) {
   state.currentCourse = state.courses.find((course) => course.id === courseId) || null;
   state.selectedNode = null;
-  await Promise.all([loadTree(), loadNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
+  await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadReview()]);
   render();
 }
 
@@ -435,6 +439,17 @@ async function loadNotes() {
     showToast(error.message);
   }
   renderNotes();
+}
+
+async function loadSharedNotes() {
+  if (!state.currentCourse) return;
+  const sort = $("shared-note-sort").value;
+  try {
+    state.sharedNotes = await api(`/api/notes?course_id=${state.currentCourse.id}&shared_only=true&sort=${sort}`);
+  } catch (error) {
+    state.sharedNotes = [];
+    showToast(error.message);
+  }
   renderSharedNotes();
 }
 
@@ -463,7 +478,7 @@ async function createNote(event) {
       })
     });
     refs.noteForm.reset();
-    await Promise.all([loadNotes(), loadTree()]);
+    await Promise.all([loadNotes(), loadSharedNotes(), loadTree()]);
     showToast("笔记已保存");
   } catch (error) {
     showToast(error.message);
@@ -526,7 +541,7 @@ function appendMarkdown(textInput, markdown) {
 async function publishNote(noteId) {
   try {
     await api(`/api/notes/${noteId}/publish`, { method: "POST" });
-    await loadNotes();
+    await Promise.all([loadNotes(), loadSharedNotes()]);
     showToast("笔记已发布");
   } catch (error) {
     showToast(error.message);
@@ -543,7 +558,7 @@ async function toggleLikeNote(noteId, likeReactionId) {
         body: JSON.stringify({ target_type: "note", target_id: noteId, reaction_type: "like" })
       });
     }
-    await loadNotes();
+    await Promise.all([loadNotes(), loadSharedNotes()]);
     showToast(likeReactionId ? "已取消点赞" : "已点赞");
   } catch (error) {
     showToast(error.message);
@@ -560,7 +575,7 @@ async function toggleFavoriteContent(targetType, targetId, favoriteReactionId) {
         body: JSON.stringify({ target_type: targetType, target_id: targetId, reaction_type: "favorite" })
       });
     }
-    await Promise.all([loadNotes(), loadMistakes(), loadReview()]);
+    await Promise.all([loadNotes(), loadSharedNotes(), loadMistakes(), loadReview()]);
     showToast(favoriteReactionId ? "已取消收藏" : "已收藏");
   } catch (error) {
     showToast(error.message);
@@ -575,7 +590,7 @@ async function commentNote(noteId) {
       method: "POST",
       body: JSON.stringify({ target_type: "note", target_id: noteId, content })
     });
-    await loadNotes();
+    await Promise.all([loadNotes(), loadSharedNotes()]);
     showToast("评论已发布");
   } catch (error) {
     showToast(error.message);
@@ -586,7 +601,7 @@ async function runAi(noteId, type) {
   try {
     const result = await api(`/api/ai/notes/${noteId}/${type}`, { method: "POST" });
     await api(`/api/ai/results/${result.id}/accept`, { method: "POST" });
-    await loadNotes();
+    await Promise.all([loadNotes(), loadSharedNotes()]);
     showToast(type === "summary" ? "摘要已采纳" : "标签已采纳");
   } catch (error) {
     showToast(error.message);
@@ -886,7 +901,7 @@ function renderNotes() {
 }
 
 function renderSharedNotes() {
-  const notes = (state.notes || []).filter((note) => note.visibility === "shared");
+  const notes = state.sharedNotes || [];
   if (!state.currentCourse) {
     refs.sharedNoteList.innerHTML = `<div class="meta">选择课程后显示共享笔记</div>`;
     return;
@@ -950,7 +965,7 @@ async function deleteNote(noteId) {
   if (!window.confirm("确认删除这篇笔记？")) return;
   try {
     await api(`/api/notes/${noteId}`, { method: "DELETE" });
-    await Promise.all([loadNotes(), loadTree()]);
+    await Promise.all([loadNotes(), loadSharedNotes(), loadTree()]);
     showToast("笔记已删除");
   } catch (error) {
     showToast(error.message);
