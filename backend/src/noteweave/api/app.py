@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 
 from noteweave.api.schemas import (
+    AIResultAcceptRequest,
     AttachmentCreateRequest,
     CommentCreateRequest,
     CourseCreateRequest,
@@ -1095,6 +1096,7 @@ def register_routes(app: FastAPI) -> None:
     @app.post("/api/ai/results/{result_id}/accept")
     async def accept_ai_result(
         result_id: int,
+        payload: AIResultAcceptRequest | None = None,
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
@@ -1103,14 +1105,39 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="only note AI results are supported")
         note = get_note(db, int(result["target_id"]))
         ensure_note_write(db, note, user["id"])
-        payload = loads(result["result"], {})
+        result_payload = loads(result["result"], {})
         if result["task_type"] == "summary":
-            db.execute("UPDATE notes SET summary = ?, updated_at = ? WHERE id = ?", (payload.get("summary", ""), now_iso(), note["id"]))
+            summary = payload.summary if payload and payload.summary is not None else result_payload.get("summary", "")
+            result_payload["summary"] = summary
+            result_payload["edited_by"] = user["id"] if payload and payload.summary is not None else result_payload.get("edited_by")
+            db.execute("UPDATE notes SET summary = ?, updated_at = ? WHERE id = ?", (summary, now_iso(), note["id"]))
         elif result["task_type"] == "tags":
-            db.execute("UPDATE notes SET tags = ?, updated_at = ? WHERE id = ?", (dumps(payload.get("tags", [])), now_iso(), note["id"]))
+            tags = payload.tags if payload and payload.tags is not None else result_payload.get("tags", [])
+            result_payload["tags"] = tags
+            result_payload["edited_by"] = user["id"] if payload and payload.tags is not None else result_payload.get("edited_by")
+            db.execute("UPDATE notes SET tags = ?, updated_at = ? WHERE id = ?", (dumps(tags), now_iso(), note["id"]))
+        else:
+            raise HTTPException(status_code=400, detail="unsupported AI task type")
         refresh_note_search_chunk(db, int(note["id"]))
         db.execute(
-            "UPDATE ai_results SET status = 'accepted', accepted_by = ?, accepted_at = ? WHERE id = ?",
+            "UPDATE ai_results SET status = 'accepted', result = ?, accepted_by = ?, accepted_at = ? WHERE id = ?",
+            (dumps(result_payload), user["id"], now_iso(), result_id),
+        )
+        return serialize_ai_result(get_ai_result(db, result_id))
+
+    @app.post("/api/ai/results/{result_id}/reject")
+    async def reject_ai_result(
+        result_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        result = get_ai_result(db, result_id)
+        if result["target_type"] != "note":
+            raise HTTPException(status_code=400, detail="only note AI results are supported")
+        note = get_note(db, int(result["target_id"]))
+        ensure_note_write(db, note, user["id"])
+        db.execute(
+            "UPDATE ai_results SET status = 'rejected', accepted_by = ?, accepted_at = ? WHERE id = ?",
             (user["id"], now_iso(), result_id),
         )
         return serialize_ai_result(get_ai_result(db, result_id))

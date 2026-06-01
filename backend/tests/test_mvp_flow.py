@@ -164,12 +164,16 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert summary_res.status_code == 200
         summary_id = summary_res.json()["id"]
         assert summary_res.json()["result"]["source"] == "fallback"
-        summary_text = summary_res.json()["result"]["summary"]
+        summary_text = f"{summary_res.json()['result']['summary']} Edited by Alice."
         accept_summary_res = await client.post(
-            f"/api/ai/results/{summary_id}/accept", headers=alice
+            f"/api/ai/results/{summary_id}/accept",
+            headers=alice,
+            json={"summary": summary_text},
         )
         assert accept_summary_res.status_code == 200
         assert accept_summary_res.json()["status"] == "accepted"
+        assert accept_summary_res.json()["result"]["summary"] == summary_text
+        assert accept_summary_res.json()["result"]["edited_by"] == alice_id
         summary_chunk = app.state.db.one(
             "SELECT * FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
             (note_id,),
@@ -179,16 +183,31 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         tags_res = await client.post(f"/api/ai/notes/{note_id}/tags", headers=alice)
         assert tags_res.status_code == 200
         assert tags_res.json()["result"]["source"] == "fallback"
-        extracted_tags = tags_res.json()["result"]["tags"]
+        extracted_tags = [*tags_res.json()["result"]["tags"], "manual-review"]
         accept_tags_res = await client.post(
-            f"/api/ai/results/{tags_res.json()['id']}/accept", headers=alice
+            f"/api/ai/results/{tags_res.json()['id']}/accept",
+            headers=alice,
+            json={"tags": extracted_tags},
         )
         assert accept_tags_res.status_code == 200
+        assert accept_tags_res.json()["result"]["tags"] == extracted_tags
         tags_chunk = app.state.db.one(
             "SELECT * FROM search_chunks WHERE source_type = 'note' AND source_id = ?",
             (note_id,),
         )
         assert tags_chunk["tags_text"].splitlines() == extracted_tags
+
+        rejected_summary_res = await client.post(f"/api/ai/notes/{popular_note_id}/summary", headers=alice)
+        assert rejected_summary_res.status_code == 200
+        reject_ai_res = await client.post(
+            f"/api/ai/results/{rejected_summary_res.json()['id']}/reject",
+            headers=alice,
+        )
+        assert reject_ai_res.status_code == 200
+        assert reject_ai_res.json()["status"] == "rejected"
+        popular_note_detail_res = await client.get(f"/api/notes/{popular_note_id}", headers=alice)
+        assert popular_note_detail_res.status_code == 200
+        assert popular_note_detail_res.json()["summary"] == ""
 
         comment_res = await client.post(
             "/api/comments",

@@ -151,3 +151,8 @@ class SuggestionCreateRequest(BaseModel):
 
 class SuggestionHandleRequest(BaseModel):
     status: Literal["accepted", "rejected", "discussed"]
+
+
+class AIResultAcceptRequest(BaseModel):
+    summary: str | None = None
+    tags: list[str] | None = None

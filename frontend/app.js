@@ -606,7 +606,32 @@ async function commentNote(noteId) {
 async function runAi(noteId, type) {
   try {
     const result = await api(`/api/ai/notes/${noteId}/${type}`, { method: "POST" });
-    await api(`/api/ai/results/${result.id}/accept`, { method: "POST" });
+    const generated = result.result || {};
+    const payload = {};
+    if (type === "summary") {
+      const editedSummary = window.prompt("确认或编辑 AI 摘要；取消则放弃本次结果", generated.summary || "");
+      if (editedSummary === null) {
+        await api(`/api/ai/results/${result.id}/reject`, { method: "POST" });
+        showToast("AI 摘要已放弃");
+        return;
+      }
+      payload.summary = editedSummary.trim();
+    } else {
+      const editedTags = window.prompt(
+        "确认或编辑 AI 标签，用逗号分隔；取消则放弃本次结果",
+        (generated.tags || []).join(", ")
+      );
+      if (editedTags === null) {
+        await api(`/api/ai/results/${result.id}/reject`, { method: "POST" });
+        showToast("AI 标签已放弃");
+        return;
+      }
+      payload.tags = tagsFromInput(editedTags);
+    }
+    await api(`/api/ai/results/${result.id}/accept`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
     await Promise.all([loadNotes(), loadSharedNotes()]);
     showToast(type === "summary" ? "摘要已采纳" : "标签已采纳");
   } catch (error) {
