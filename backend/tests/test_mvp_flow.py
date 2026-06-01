@@ -280,6 +280,13 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
             },
         )
         assert popular_second_comment_res.status_code == 200
+        paged_comments_res = await client.get(
+            "/api/comments",
+            headers=alice,
+            params={"target_type": "note", "target_id": popular_note_id, "limit": 1, "offset": 1},
+        )
+        assert paged_comments_res.status_code == 200
+        assert [comment["content"] for comment in paged_comments_res.json()] == ["Another discussion point."]
 
         favorite_note_res = await client.post(
             "/api/reactions",
@@ -621,6 +628,12 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         )
         assert temp_note_res.status_code == 200
         temp_note_id = temp_note_res.json()["id"]
+        bob_private_note_comments_res = await client.get(
+            "/api/comments",
+            headers=bob,
+            params={"target_type": "note", "target_id": temp_note_id},
+        )
+        assert bob_private_note_comments_res.status_code == 403
         delete_temp_note_res = await client.delete(f"/api/notes/{temp_note_id}", headers=alice)
         assert delete_temp_note_res.status_code == 200
         assert (

@@ -889,6 +889,7 @@ def register_routes(app: FastAPI) -> None:
     ):
         course_id = target_course_id(db, payload.target_type, payload.target_id)
         ensure_member(db, course_id, user["id"])
+        ensure_comment_target_access(db, payload.target_type, payload.target_id, user["id"])
         comment_id = db.execute(
             "INSERT INTO comments (target_type, target_id, content, author_id, created_at) VALUES (?, ?, ?, ?, ?)",
             (payload.target_type, payload.target_id, payload.content, user["id"], now_iso()),
@@ -896,6 +897,29 @@ def register_routes(app: FastAPI) -> None:
         if payload.target_type == "note":
             db.execute("UPDATE notes SET comment_count = comment_count + 1 WHERE id = ?", (payload.target_id,))
         return serialize_comment(get_comment(db, comment_id))
+
+    @app.get("/api/comments")
+    async def list_comments(
+        target_type: str,
+        target_id: int,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        course_id = target_course_id(db, target_type, target_id)
+        ensure_member(db, course_id, user["id"])
+        ensure_comment_target_access(db, target_type, target_id, user["id"])
+        rows = db.all(
+            """
+            SELECT * FROM comments
+            WHERE target_type = ? AND target_id = ?
+            ORDER BY created_at
+            LIMIT ? OFFSET ?
+            """,
+            (target_type, target_id, limit, offset),
+        )
+        return [serialize_comment(row) for row in rows]
 
     @app.post("/api/reactions")
     async def create_reaction(
@@ -1989,6 +2013,18 @@ def serialize_comment(row: dict[str, Any]) -> dict[str, Any]:
         "author_id": row["author_id"],
         "created_at": row["created_at"],
     }
+
+
+def ensure_comment_target_access(db: Database, target_type: str, target_id: int, user_id: int) -> None:
+    if target_type == "note":
+        ensure_note_access(db, get_note(db, target_id), user_id)
+    elif target_type == "mistake":
+        ensure_mistake_access(db, get_mistake(db, target_id), user_id)
+    elif target_type == "suggestion":
+        suggestion = get_suggestion(db, target_id)
+        ensure_comment_target_access(db, suggestion["target_type"], int(suggestion["target_id"]), user_id)
+    else:
+        raise HTTPException(status_code=400, detail="unsupported target type")
 
 
 def get_suggestion(db: Database, suggestion_id: int) -> dict[str, Any]:

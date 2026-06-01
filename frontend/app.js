@@ -701,6 +701,24 @@ async function commentNote(noteId) {
   }
 }
 
+async function viewComments(targetType, targetId) {
+  try {
+    const params = new URLSearchParams({
+      target_type: targetType,
+      target_id: String(targetId),
+      limit: "20",
+      offset: "0"
+    });
+    const comments = await api(`/api/comments?${params.toString()}`);
+    const text = comments.length
+      ? comments.map((comment) => `#${comment.id} 用户 ${comment.author_id}: ${comment.content}`).join("\n")
+      : "暂无评论";
+    window.alert(text);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function runAi(noteId, type) {
   try {
     const result = await api(`/api/ai/notes/${noteId}/${type}`, { method: "POST" });
@@ -1184,6 +1202,7 @@ function renderNoteItem(note) {
         <button class="secondary" data-action="like" data-like-reaction-id="${likeAction}">${note.is_liked ? "取消点赞" : "点赞"}</button>
         <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${note.is_favorite ? "取消收藏" : "收藏"}</button>
         <button class="secondary" data-action="comment">评论</button>
+        <button class="secondary" data-action="view-comments">查看评论</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
         <button class="text" data-action="suggest-target">设为建议目标</button>
@@ -1203,6 +1222,7 @@ function bindNoteActions(container) {
         if (action === "like") toggleLikeNote(noteId, Number(button.dataset.likeReactionId) || null);
         if (action === "favorite") toggleFavoriteContent("note", noteId, Number(button.dataset.favoriteReactionId) || null);
         if (action === "comment") commentNote(noteId);
+        if (action === "view-comments") viewComments("note", noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
         if (action === "delete") deleteNote(noteId);
