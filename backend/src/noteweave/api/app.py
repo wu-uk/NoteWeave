@@ -483,6 +483,8 @@ def register_routes(app: FastAPI) -> None:
         node_id: int | None = None,
         shared_only: bool = False,
         sort: str = "updated",
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
@@ -505,8 +507,8 @@ def register_routes(app: FastAPI) -> None:
             clauses.append("(visibility = 'shared' OR author_id = ?)")
             params.append(user["id"])
         rows = db.all(
-            f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY {sort_columns[sort]}",
-            tuple(params),
+            f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY {sort_columns[sort]} LIMIT ? OFFSET ?",
+            tuple([*params, limit, offset]),
         )
         return [serialize_note(row, db, user_id=user["id"]) for row in rows]
 
@@ -747,6 +749,8 @@ def register_routes(app: FastAPI) -> None:
         tag: str | None = None,
         question_type: str | None = None,
         mastery_status: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
@@ -766,7 +770,7 @@ def register_routes(app: FastAPI) -> None:
             if mastery_status and row["mastery_status"] != mastery_status:
                 continue
             result.append(serialize_mistake(row, db, user_id=user["id"]))
-        return result
+        return result[offset : offset + limit]
 
     @app.patch("/api/mistakes/{mistake_id}")
     async def update_mistake(
@@ -924,6 +928,8 @@ def register_routes(app: FastAPI) -> None:
         tag: str | None = None,
         question_type: str | None = None,
         mode: str = "all",
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
@@ -953,7 +959,7 @@ def register_routes(app: FastAPI) -> None:
             items.sort(key=lambda row: row.get("last_viewed_at") or "", reverse=True)
         else:
             items.sort(key=lambda row: row["updated_at"], reverse=True)
-        return items[:50]
+        return items[offset : offset + limit]
 
     @app.post("/api/views")
     async def record_view(

@@ -406,6 +406,30 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert {item["source_type"] for item in review_items} == {"note", "mistake"}
         assert all(item["is_favorite"] for item in review_items)
 
+        paged_notes_res = await client.get(
+            "/api/notes",
+            headers=alice,
+            params={"course_id": course["id"], "limit": 1, "offset": 1},
+        )
+        assert paged_notes_res.status_code == 200
+        assert len(paged_notes_res.json()) == 1
+
+        paged_mistakes_res = await client.get(
+            "/api/mistakes",
+            headers=alice,
+            params={"course_id": course["id"], "limit": 1, "offset": 0},
+        )
+        assert paged_mistakes_res.status_code == 200
+        assert len(paged_mistakes_res.json()) == 1
+
+        paged_review_res = await client.get(
+            f"/api/courses/{course['id']}/review",
+            headers=alice,
+            params={"mode": "all", "limit": 1, "offset": 1},
+        )
+        assert paged_review_res.status_code == 200
+        assert len(paged_review_res.json()) == 1
+
         review_mistake_res = await client.get(
             f"/api/courses/{course['id']}/review",
             headers=alice,

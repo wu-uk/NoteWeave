@@ -1,5 +1,6 @@
 const API_BASE = localStorage.getItem("noteweave_api_base") || "http://127.0.0.1:8000";
 const TOKEN_KEY = "noteweave_token";
+const PAGE_SIZE = 10;
 
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || "",
@@ -16,6 +17,12 @@ const state = {
   suggestions: [],
   members: [],
   reviewItems: [],
+  paging: {
+    notesHasMore: false,
+    sharedNotesHasMore: false,
+    mistakesHasMore: false,
+    reviewHasMore: false
+  },
   activeView: "overview"
 };
 
@@ -145,6 +152,15 @@ function currentNodeId() {
   return state.selectedNode ? state.selectedNode.id : null;
 }
 
+function resetPaging() {
+  state.paging = {
+    notesHasMore: false,
+    sharedNotesHasMore: false,
+    mistakesHasMore: false,
+    reviewHasMore: false
+  };
+}
+
 async function boot() {
   bindEvents();
   renderAuth();
@@ -172,11 +188,15 @@ function bindEvents() {
   $("tree-search").addEventListener("input", renderTree);
   $("expand-tree-button").addEventListener("click", expandTree);
   $("collapse-tree-button").addEventListener("click", collapseTree);
-  $("refresh-notes-button").addEventListener("click", loadNotes);
-  $("refresh-shared-notes-button").addEventListener("click", loadSharedNotes);
-  $("shared-note-sort").addEventListener("change", loadSharedNotes);
-  $("refresh-mistakes-button").addEventListener("click", loadMistakes);
+  $("refresh-notes-button").addEventListener("click", () => loadNotes());
+  $("load-more-notes-button").addEventListener("click", () => loadNotes(true));
+  $("refresh-shared-notes-button").addEventListener("click", () => loadSharedNotes());
+  $("load-more-shared-notes-button").addEventListener("click", () => loadSharedNotes(true));
+  $("shared-note-sort").addEventListener("change", () => loadSharedNotes());
+  $("refresh-mistakes-button").addEventListener("click", () => loadMistakes());
+  $("load-more-mistakes-button").addEventListener("click", () => loadMistakes(true));
   $("refresh-review-button").addEventListener("click", () => loadReview());
+  $("load-more-review-button").addEventListener("click", () => loadReview(true));
   $("mistake-filter-tag").addEventListener("input", renderMistakes);
   $("mistake-filter-mastery").addEventListener("change", renderMistakes);
   $("note-image-button").addEventListener("click", () => uploadImage("note"));
@@ -241,6 +261,7 @@ async function logout() {
   state.suggestions = [];
   state.members = [];
   state.reviewItems = [];
+  resetPaging();
   render();
 }
 
@@ -397,10 +418,12 @@ async function updateMemberRole(memberId, role) {
   }
 }
 
-async function loadReview() {
+async function loadReview(append = false) {
   if (!state.currentCourse) return;
   const params = new URLSearchParams({
-    mode: $("review-mode").value
+    mode: $("review-mode").value,
+    limit: PAGE_SIZE,
+    offset: append ? state.reviewItems.length : 0
   });
   const tag = $("review-tag").value.trim();
   const questionType = $("review-question-type").value.trim();
@@ -414,9 +437,12 @@ async function loadReview() {
     params.set("node_id", state.selectedNode.id);
   }
   try {
-    state.reviewItems = await api(`/api/courses/${state.currentCourse.id}/review?${params.toString()}`);
+    const rows = await api(`/api/courses/${state.currentCourse.id}/review?${params.toString()}`);
+    state.reviewItems = append ? [...state.reviewItems, ...rows] : rows;
+    state.paging.reviewHasMore = rows.length === PAGE_SIZE;
   } catch (error) {
-    state.reviewItems = [];
+    if (!append) state.reviewItems = [];
+    state.paging.reviewHasMore = false;
     showToast(error.message);
   }
   renderReview();
@@ -450,23 +476,32 @@ async function createNode(event) {
   }
 }
 
-async function loadNotes() {
+async function loadNotes(append = false) {
   if (!state.currentCourse) return;
+  const offset = append ? state.notes.length : 0;
   try {
-    state.notes = await api(`/api/notes?course_id=${state.currentCourse.id}`);
+    const rows = await api(`/api/notes?course_id=${state.currentCourse.id}&limit=${PAGE_SIZE}&offset=${offset}`);
+    state.notes = append ? [...state.notes, ...rows] : rows;
+    state.paging.notesHasMore = rows.length === PAGE_SIZE;
   } catch (error) {
+    if (!append) state.notes = [];
+    state.paging.notesHasMore = false;
     showToast(error.message);
   }
   renderNotes();
 }
 
-async function loadSharedNotes() {
+async function loadSharedNotes(append = false) {
   if (!state.currentCourse) return;
   const sort = $("shared-note-sort").value;
+  const offset = append ? state.sharedNotes.length : 0;
   try {
-    state.sharedNotes = await api(`/api/notes?course_id=${state.currentCourse.id}&shared_only=true&sort=${sort}`);
+    const rows = await api(`/api/notes?course_id=${state.currentCourse.id}&shared_only=true&sort=${sort}&limit=${PAGE_SIZE}&offset=${offset}`);
+    state.sharedNotes = append ? [...state.sharedNotes, ...rows] : rows;
+    state.paging.sharedNotesHasMore = rows.length === PAGE_SIZE;
   } catch (error) {
-    state.sharedNotes = [];
+    if (!append) state.sharedNotes = [];
+    state.paging.sharedNotesHasMore = false;
     showToast(error.message);
   }
   renderSharedNotes();
@@ -652,11 +687,16 @@ async function runAi(noteId, type) {
   }
 }
 
-async function loadMistakes() {
+async function loadMistakes(append = false) {
   if (!state.currentCourse) return;
+  const offset = append ? state.mistakes.length : 0;
   try {
-    state.mistakes = await api(`/api/mistakes?course_id=${state.currentCourse.id}`);
+    const rows = await api(`/api/mistakes?course_id=${state.currentCourse.id}&limit=${PAGE_SIZE}&offset=${offset}`);
+    state.mistakes = append ? [...state.mistakes, ...rows] : rows;
+    state.paging.mistakesHasMore = rows.length === PAGE_SIZE;
   } catch (error) {
+    if (!append) state.mistakes = [];
+    state.paging.mistakesHasMore = false;
     showToast(error.message);
   }
   renderMistakes();
@@ -1051,6 +1091,7 @@ function bindNodeDetailActions() {
 function renderNotes() {
   const notes = state.notes || [];
   refs.noteCount.textContent = `${notes.length} 条`;
+  $("load-more-notes-button").classList.toggle("hidden", !state.paging.notesHasMore);
   if (!state.currentCourse) {
     refs.noteList.innerHTML = `<div class="meta">选择课程后显示笔记</div>`;
     return;
@@ -1065,6 +1106,7 @@ function renderNotes() {
 
 function renderSharedNotes() {
   const notes = state.sharedNotes || [];
+  $("load-more-shared-notes-button").classList.toggle("hidden", !state.paging.sharedNotesHasMore);
   if (!state.currentCourse) {
     refs.sharedNoteList.innerHTML = `<div class="meta">选择课程后显示共享笔记</div>`;
     return;
@@ -1137,6 +1179,7 @@ async function deleteNote(noteId) {
 }
 
 function renderMistakes() {
+  $("load-more-mistakes-button").classList.toggle("hidden", !state.paging.mistakesHasMore);
   const tagFilter = $("mistake-filter-tag").value.trim();
   const masteryFilter = $("mistake-filter-mastery").value;
   let mistakes = state.mistakes || [];
@@ -1200,6 +1243,7 @@ function renderMistakes() {
 }
 
 function renderReview() {
+  $("load-more-review-button").classList.toggle("hidden", !state.paging.reviewHasMore);
   if (!state.currentCourse) {
     refs.reviewList.innerHTML = `<div class="meta">选择课程后显示复习资料</div>`;
     return;

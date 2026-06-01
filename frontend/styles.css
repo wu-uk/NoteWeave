@@ -520,6 +520,12 @@ textarea:focus {
   gap: 10px;
 }
 
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
 .item {
   padding: 13px;
   border: 1px solid var(--line);
