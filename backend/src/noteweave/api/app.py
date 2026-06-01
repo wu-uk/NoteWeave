@@ -158,6 +158,25 @@ def register_routes(app: FastAPI) -> None:
         )
         return [serialize_course(row, db=db, user_id=user["id"]) for row in rows]
 
+    @app.post("/api/courses/join")
+    async def join_course_by_code(
+        payload: CourseJoinRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        course = db.one("SELECT * FROM courses WHERE invite_code = ?", (payload.invite_code,))
+        if not course:
+            raise HTTPException(status_code=404, detail="course invite not found")
+        ts = now_iso()
+        try:
+            db.execute(
+                "INSERT INTO course_members (course_id, user_id, role, joined_at) VALUES (?, ?, 'student', ?)",
+                (course["id"], user["id"], ts),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        return serialize_course(course, db=db, user_id=user["id"])
+
     @app.get("/api/courses/{course_id}")
     async def course_detail(
         course_id: int,

@@ -39,3 +39,22 @@ env UV_CACHE_DIR=/root/project/NoteWeave/.uv-cache ../.tools/uv/bin/uv run --no-
 ```bash
 curl http://127.0.0.1:8000/health
 ```
+
+## 前端工作台
+
+当前前端位于 `frontend/`，是无构建依赖的静态页面。先启动后端，再直接打开：
+
+[frontend/index.html](/root/project/NoteWeave/frontend/index.html)
+
+也可以用本地静态服务预览：
+
+```bash
+cd /root/project/NoteWeave/frontend
+python3 -m http.server 5173 --bind 127.0.0.1
+```
+
+访问：
+
+```text
+http://127.0.0.1:5173
+```

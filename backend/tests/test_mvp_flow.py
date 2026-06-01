@@ -201,7 +201,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert before_join.status_code == 403
 
         join_res = await client.post(
-            f"/api/courses/{course['id']}/join",
+            "/api/courses/join",
             headers=bob,
             json={"invite_code": course["invite_code"]},
         )
