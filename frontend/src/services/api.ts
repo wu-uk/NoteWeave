@@ -190,8 +190,9 @@ export const api = {
     return request<Note[]>(`/api/notes?${params.toString()}`);
   },
 
-  listNoteFeed(limit = 100) {
+  listNoteFeed(limit = 100, q = "") {
     const params = new URLSearchParams({ limit: String(limit) });
+    if (q.trim()) params.set("q", q.trim());
     return request<Note[]>(`/api/notes/feed?${params.toString()}`);
   },
 

@@ -151,7 +151,7 @@
         </div>
         <div class="search-box">
           <Search :size="15" />
-          <input v-model.trim="keyword" placeholder="筛选当前笔记" />
+          <input v-model.trim="keyword" placeholder="搜索可见笔记" @input="scheduleFeedSearch" />
         </div>
       </section>
 
@@ -377,6 +377,7 @@ const question = ref("");
 const toast = ref("");
 const documentInput = ref<HTMLInputElement | null>(null);
 const importingDocument = ref(false);
+let searchTimer: number | undefined;
 const lastClassification = ref<{
   course_name: string;
   node_title: string;
@@ -429,14 +430,9 @@ const selectedCourseName = computed(() => {
 });
 
 const filteredNotes = computed(() => {
-  const term = keyword.value.trim().toLowerCase();
   return notes.value.filter((note) => {
     if (selectedCourseId.value !== null && note.course_id !== selectedCourseId.value) return false;
-    if (!term) return true;
-    return [note.title, note.content_text, note.summary, note.node_path, ...(note.tags || [])]
-      .join(" ")
-      .toLowerCase()
-      .includes(term);
+    return true;
   });
 });
 
@@ -505,7 +501,7 @@ async function loadAdminOverview(): Promise<void> {
 
 async function loadCoursesAndNotes(): Promise<void> {
   if (!user.value) return;
-  const [courseList, noteFeed] = await Promise.all([api.listCourses(), api.listNoteFeed()]);
+  const [courseList, noteFeed] = await Promise.all([api.listCourses(), api.listNoteFeed(100, keyword.value)]);
   courses.value = courseList;
   notes.value = noteFeed;
   if (activeNote.value) {
@@ -513,6 +509,13 @@ async function loadCoursesAndNotes(): Promise<void> {
   } else {
     activeNote.value = notes.value[0] || null;
   }
+}
+
+function scheduleFeedSearch(): void {
+  window.clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(() => {
+    void guarded(loadCoursesAndNotes);
+  }, 260);
 }
 
 function selectCourse(courseId: number | null): void {

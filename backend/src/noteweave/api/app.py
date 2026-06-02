@@ -845,9 +845,24 @@ def register_routes(app: FastAPI) -> None:
     async def note_feed(
         limit: int = Query(default=100, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
+        q: str = Query(default="", max_length=120),
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
+        query = q.strip().lower()
+        if query:
+            rows = db.all(
+                """
+                SELECT *
+                FROM notes
+                WHERE visibility = 'shared' OR author_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (user["id"],),
+            )
+            matched = [row for row in rows if feed_note_matches(db, row, query)]
+            return [serialize_note(row, db, user_id=user["id"]) for row in matched[offset : offset + limit]]
+
         rows = db.all(
             """
             SELECT *
@@ -2257,6 +2272,24 @@ def serialize_note(
         )
         data["comments"] = [serialize_comment(c, db) for c in comments]
     return data
+
+
+def feed_note_matches(db: Database, note: dict[str, Any], query: str) -> bool:
+    tags = loads(note["tags"], [])
+    node = db.one("SELECT path FROM knowledge_nodes WHERE id = ?", (note["node_id"],)) if note["node_id"] else None
+    author = get_user(db, int(note["author_id"]))
+    haystack = " ".join(
+        [
+            note["title"] or "",
+            note["content_text"] or "",
+            note["summary"] or "",
+            " ".join(tags),
+            node["path"] if node else "",
+            author["display_name"],
+            author["username"],
+        ]
+    ).lower()
+    return all(term in haystack for term in search_terms(query))
 
 
 def ensure_note_access(db: Database, note: dict[str, Any], user_id: int) -> None:

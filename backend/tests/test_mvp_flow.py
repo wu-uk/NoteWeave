@@ -1144,6 +1144,15 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert any(note["id"] == imported["note"]["id"] for note in feed)
         assert all(note["id"] != private_note_id for note in feed)
 
+        search_feed_res = await client.get("/api/notes/feed?q=Dijkstra%20graph", headers=bob)
+        assert search_feed_res.status_code == 200
+        search_feed = search_feed_res.json()
+        assert [note["id"] for note in search_feed] == [imported["note"]["id"]]
+
+        private_search_feed_res = await client.get("/api/notes/feed?q=partitioning", headers=bob)
+        assert private_search_feed_res.status_code == 200
+        assert private_search_feed_res.json() == []
+
         comment_res = await client.post(
             "/api/comments",
             headers=bob,
