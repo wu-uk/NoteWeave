@@ -1362,6 +1362,26 @@ async def test_real_ai_api_flows_through_note_endpoints(tmp_path):
         assert ingested["classification"]["summary"]
         assert ingested["classification"]["tags"]
 
+        markdown = "# Binary search\n\nBinary search halves a sorted array on each comparison."
+        import_res = await client.post(
+            "/api/notes/import",
+            headers=headers,
+            json={
+                "file_name": "binary-search.md",
+                "content_type": "text/markdown",
+                "data_base64": base64.b64encode(markdown.encode("utf-8")).decode("ascii"),
+                "visibility": "shared",
+                "tags": ["algorithm"],
+            },
+        )
+        assert import_res.status_code == 200
+        imported = import_res.json()
+        assert imported["document"]["parser"] == "markdown"
+        assert imported["classification"]["source"] == "remote"
+        assert imported["classification"]["course_name"]
+        assert imported["classification"]["node_title"]
+        assert "Binary search" in imported["note"]["content_text"]
+
         ask_res = await client.post(
             "/api/notes/ask",
             headers=headers,
