@@ -2,6 +2,7 @@ import type {
   AiStatus,
   AiResult,
   AiTaskType,
+  AdminOverview,
   Attachment,
   Comment,
   Course,
@@ -90,6 +91,10 @@ export const api = {
 
   me() {
     return request<User>("/api/auth/me");
+  },
+
+  adminOverview() {
+    return request<AdminOverview>("/api/admin/overview");
   },
 
   aiStatus() {

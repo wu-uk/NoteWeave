@@ -57,6 +57,14 @@ class Database:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
             conn.execute("UPDATE users SET system_role = 'user' WHERE system_role = 'student'")
+            conn.execute(
+                """
+                UPDATE users
+                SET system_role = 'admin'
+                WHERE id = (SELECT MIN(id) FROM users)
+                  AND NOT EXISTS (SELECT 1 FROM users WHERE system_role = 'admin')
+                """
+            )
             conn.commit()
 
     def one(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:

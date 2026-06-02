@@ -74,16 +74,18 @@ def register_routes(app: FastAPI) -> None:
     async def register(payload: RegisterRequest, db: Database = Depends(get_db)):
         created_at = now_iso()
         display_name = payload.display_name or payload.username
+        system_role = "admin" if not has_admin(db) else "user"
         try:
             user_id = db.execute(
                 """
-                INSERT INTO users (username, password_hash, display_name, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO users (username, password_hash, display_name, system_role, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     payload.username,
                     hash_password(payload.password),
                     display_name,
+                    system_role,
                     created_at,
                 ),
             )
@@ -142,6 +144,37 @@ def register_routes(app: FastAPI) -> None:
             "api_key_configured": bool(settings.model_api_key),
             "chat_model": settings.chat_model or "",
             "fallback_available": True,
+        }
+
+    @app.get("/api/admin/overview")
+    async def admin_overview(
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        ensure_admin(user)
+        stats = db.one(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM users) AS user_count,
+              (SELECT COUNT(*) FROM users WHERE system_role = 'admin') AS admin_count,
+              (SELECT COUNT(*) FROM notes) AS note_count,
+              (SELECT COUNT(*) FROM notes WHERE visibility = 'shared') AS shared_note_count,
+              (SELECT COUNT(*) FROM attachments) AS attachment_count,
+              (SELECT COUNT(*) FROM comments) AS comment_count,
+              (SELECT COUNT(*) FROM reactions WHERE reaction_type = 'like') AS like_count,
+              (SELECT COUNT(*) FROM ai_results) AS ai_result_count
+            """
+        )
+        recent_users = db.all("SELECT id, username, display_name, system_role, created_at FROM users ORDER BY id DESC LIMIT 8")
+        return {
+            "stats": stats or {},
+            "recent_users": [serialize_user(row) for row in recent_users],
+            "ai": {
+                "enabled": settings.enable_ai,
+                "remote_configured": bool(settings.model_base_url and settings.model_api_key and settings.chat_model),
+                "chat_model": settings.chat_model or "",
+            },
         }
 
     @app.post("/api/courses")
@@ -1550,6 +1583,16 @@ def get_user(db: Database, user_id: int) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="user not found")
     return row
+
+
+def has_admin(db: Database) -> bool:
+    row = db.one("SELECT 1 AS ok FROM users WHERE system_role = 'admin' LIMIT 1")
+    return bool(row)
+
+
+def ensure_admin(user: dict[str, Any]) -> None:
+    if user.get("system_role") != "admin":
+        raise HTTPException(status_code=403, detail="admin role required")
 
 
 def serialize_user(row: dict[str, Any]) -> dict[str, Any]:

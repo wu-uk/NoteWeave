@@ -52,7 +52,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert alice_res.status_code == 200
         alice_token = alice_res.json()["token"]
         alice_id = alice_res.json()["user"]["id"]
-        assert alice_res.json()["user"]["system_role"] == "user"
+        assert alice_res.json()["user"]["system_role"] == "admin"
         alice = auth_headers(alice_token)
 
         profile_update_res = await client.patch(
@@ -65,7 +65,11 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         me_res = await client.get("/api/auth/me", headers=alice)
         assert me_res.status_code == 200
         assert me_res.json()["display_name"] == "Alice Cooper"
-        assert me_res.json()["system_role"] == "user"
+        assert me_res.json()["system_role"] == "admin"
+
+        admin_overview_res = await client.get("/api/admin/overview", headers=alice)
+        assert admin_overview_res.status_code == 200
+        assert admin_overview_res.json()["stats"]["user_count"] == 1
         wrong_password_update_res = await client.patch(
             "/api/auth/me",
             headers=alice,
@@ -1122,7 +1126,11 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
             json={"username": "reader", "password": "password123", "display_name": "Reader"},
         )
         assert bob_res.status_code == 200
+        assert bob_res.json()["user"]["system_role"] == "user"
         bob = auth_headers(bob_res.json()["token"])
+
+        bob_admin_res = await client.get("/api/admin/overview", headers=bob)
+        assert bob_admin_res.status_code == 403
 
         feed_res = await client.get("/api/notes/feed", headers=bob)
         assert feed_res.status_code == 200

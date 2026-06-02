@@ -241,3 +241,22 @@ export type Attachment = {
   created_at: string;
   markdown?: string;
 };
+
+export type AdminOverview = {
+  stats: {
+    user_count: number;
+    admin_count: number;
+    note_count: number;
+    shared_note_count: number;
+    attachment_count: number;
+    comment_count: number;
+    like_count: number;
+    ai_result_count: number;
+  };
+  recent_users: User[];
+  ai: {
+    enabled: boolean;
+    remote_configured: boolean;
+    chat_model: string;
+  };
+};

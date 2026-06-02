@@ -197,8 +197,39 @@
   gap: 10px;
 }
 
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-grid div,
+.admin-meta {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.admin-grid strong {
+  font-size: 20px;
+}
+
+.admin-meta {
+  margin-top: 8px;
+}
+
+.admin-meta span {
+  color: #4f5967;
+  font-size: 13px;
+}
+
 .account-card small,
 .folder-row small,
+.admin-grid small,
+.admin-meta small,
 .top-strip small,
 .feed-header small,
 .note-card small,

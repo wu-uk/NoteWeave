@@ -30,6 +30,39 @@
         </form>
       </section>
 
+      <section v-if="user?.system_role === 'admin'" class="quiet-panel admin-panel">
+        <div class="panel-kicker">
+          <ShieldCheck :size="15" />
+          <span>管理员</span>
+          <button type="button" class="icon-button" title="刷新管理概览" @click="loadAdminOverview">
+            <RefreshCcw :size="14" />
+          </button>
+        </div>
+        <div v-if="adminOverview" class="admin-grid">
+          <div>
+            <small>用户</small>
+            <strong>{{ adminOverview.stats.user_count }}</strong>
+          </div>
+          <div>
+            <small>共享笔记</small>
+            <strong>{{ adminOverview.stats.shared_note_count }}</strong>
+          </div>
+          <div>
+            <small>导入文件</small>
+            <strong>{{ adminOverview.stats.attachment_count }}</strong>
+          </div>
+          <div>
+            <small>AI 结果</small>
+            <strong>{{ adminOverview.stats.ai_result_count }}</strong>
+          </div>
+        </div>
+        <div v-if="adminOverview" class="admin-meta">
+          <small>AI</small>
+          <span>{{ adminOverview.ai.remote_configured ? `已配置 ${adminOverview.ai.chat_model}` : "未配置远程模型" }}</span>
+        </div>
+        <p v-else class="empty-text">管理员概览加载中。</p>
+      </section>
+
       <section class="quiet-panel">
         <div class="panel-kicker">
           <FolderKanban :size="15" />
@@ -315,6 +348,7 @@ import {
   Search,
   Send,
   Share2,
+  ShieldCheck,
   Sparkles,
   Tags,
   ThumbsUp,
@@ -326,7 +360,7 @@ import {
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { api, setToken, splitTags } from "@/services/api";
-import type { AiResult, AiStatus, AiTaskType, Comment, Course, Note, NoteAskContext, User } from "@/types";
+import type { AdminOverview, AiResult, AiStatus, AiTaskType, Comment, Course, Note, NoteAskContext, User } from "@/types";
 
 defineEmits<{ home: [] }>();
 
@@ -337,6 +371,7 @@ const notes = ref<Note[]>([]);
 const activeNote = ref<Note | null>(null);
 const selectedCourseId = ref<number | null>(null);
 const aiStatus = ref<AiStatus | null>(null);
+const adminOverview = ref<AdminOverview | null>(null);
 const keyword = ref("");
 const question = ref("");
 const toast = ref("");
@@ -449,16 +484,22 @@ function logout(): void {
   notes.value = [];
   activeNote.value = null;
   selectedCourseId.value = null;
+  adminOverview.value = null;
 }
 
 async function loadWorkspace(): Promise<void> {
   if (!user.value) return;
-  await Promise.all([loadAiStatus(), loadCoursesAndNotes()]);
+  await Promise.all([loadAiStatus(), loadCoursesAndNotes(), loadAdminOverview()]);
 }
 
 async function loadAiStatus(): Promise<void> {
   if (!user.value) return;
   aiStatus.value = await api.aiStatus();
+}
+
+async function loadAdminOverview(): Promise<void> {
+  if (user.value?.system_role !== "admin") return;
+  adminOverview.value = await api.adminOverview();
 }
 
 async function loadCoursesAndNotes(): Promise<void> {
