@@ -91,6 +91,17 @@
           <textarea v-model="draft.content" placeholder="写课堂记录、摘录、错题思路、代码片段。AI 会判断课程和知识点。" />
           <div class="composer-actions">
             <input v-model.trim="draft.tags" placeholder="可选标签，用逗号分隔" />
+            <button type="button" class="ghost-button" :disabled="importingDocument" @click="triggerDocumentImport">
+              <FileUp :size="15" />
+              {{ importingDocument ? "解析中" : "导入文件" }}
+            </button>
+            <input
+              ref="documentInput"
+              class="visually-hidden"
+              type="file"
+              accept=".pdf,.docx,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain"
+              @change="importDocument"
+            />
             <button v-if="draft.editingId" type="button" class="ghost-button" @click="resetDraft">取消编辑</button>
             <button type="submit" class="primary-button">
               <UploadCloud :size="15" />
@@ -170,6 +181,11 @@
           <p>{{ lastClassification.summary }}</p>
           <div class="tag-row">
             <span v-for="tag in lastClassification.tags" :key="tag">{{ tag }}</span>
+          </div>
+          <div v-if="lastImport" class="document-meta">
+            <small>文件解析</small>
+            <strong>{{ lastImport.file_name }}</strong>
+            <span>{{ lastImport.parser }} · {{ lastImport.characters }} 字符</span>
           </div>
         </div>
         <div v-else class="analysis-card muted-card">
@@ -290,6 +306,7 @@ import {
   Activity,
   Bot,
   Check,
+  FileUp,
   FolderKanban,
   MessageSquare,
   PanelRight,
@@ -323,6 +340,8 @@ const aiStatus = ref<AiStatus | null>(null);
 const keyword = ref("");
 const question = ref("");
 const toast = ref("");
+const documentInput = ref<HTMLInputElement | null>(null);
+const importingDocument = ref(false);
 const lastClassification = ref<{
   course_name: string;
   node_title: string;
@@ -330,6 +349,7 @@ const lastClassification = ref<{
   tags: string[];
   source?: string;
 } | null>(null);
+const lastImport = ref<{ file_name: string; parser: string; characters: number } | null>(null);
 
 const auth = reactive({ username: "", password: "", displayName: "" });
 const draft = reactive({
@@ -481,6 +501,7 @@ async function saveNote(): Promise<void> {
         tags: splitTags(draft.tags)
       });
       lastClassification.value = result.classification;
+      lastImport.value = null;
       selectedCourseId.value = result.course.id;
       activeNote.value = result.note;
       notify("笔记已保存并完成 AI 归类");
@@ -488,6 +509,68 @@ async function saveNote(): Promise<void> {
     resetDraft();
     await loadCoursesAndNotes();
   });
+}
+
+function triggerDocumentImport(): void {
+  if (!user.value) {
+    notify("请先登录");
+    return;
+  }
+  documentInput.value?.click();
+}
+
+async function importDocument(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  await guarded(async () => {
+    if (!user.value) throw new Error("请先登录");
+    importingDocument.value = true;
+    try {
+      const dataBase64 = await fileToBase64(file);
+      const result = await api.importNoteDocument({
+        file_name: file.name,
+        content_type: file.type || inferContentType(file.name),
+        data_base64: dataBase64,
+        visibility: draft.visibility,
+        tags: splitTags(draft.tags)
+      });
+      lastClassification.value = result.classification;
+      lastImport.value = {
+        file_name: result.document.file_name,
+        parser: result.document.parser,
+        characters: result.document.characters
+      };
+      selectedCourseId.value = result.course.id;
+      activeNote.value = result.note;
+      resetDraft();
+      await loadCoursesAndNotes();
+      notify("文件已解析并导入为笔记");
+    } finally {
+      importingDocument.value = false;
+    }
+  });
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",")[1] : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function inferContentType(fileName: string): string {
+  const suffix = fileName.toLowerCase().split(".").pop() || "";
+  if (suffix === "pdf") return "application/pdf";
+  if (suffix === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (suffix === "md" || suffix === "markdown") return "text/markdown";
+  return "application/octet-stream";
 }
 
 function resetDraft(): void {

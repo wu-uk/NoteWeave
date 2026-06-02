@@ -4,8 +4,11 @@ import base64
 import binascii
 import secrets
 import sqlite3
+import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +31,7 @@ from noteweave.api.schemas import (
     NoteAskRequest,
     NoteCreateRequest,
     NoteIngestRequest,
+    NoteImportRequest,
     NoteUpdateRequest,
     ReactionCreateRequest,
     RegisterRequest,
@@ -668,6 +672,79 @@ def register_routes(app: FastAPI) -> None:
             "classification": classification,
         }
 
+    @app.post("/api/notes/import")
+    async def import_note_document(
+        payload: NoteImportRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        file_bytes = decode_upload_data(payload.data_base64, settings)
+        extracted = extract_document_text(payload.file_name, payload.content_type, file_bytes)
+        if not extracted["text"].strip():
+            raise HTTPException(status_code=422, detail="document text could not be extracted")
+        title = document_title(payload.file_name)
+        output = await AIAssistService(settings).classify_note(title, extracted["text"], payload.tags)
+        classification = output.result
+        course = ensure_ai_course(db, user["id"], classification["course_name"], classification.get("tags", []))
+        node = ensure_ai_node(db, user["id"], int(course["id"]), classification["node_title"])
+        ts = now_iso()
+        note_id = db.execute(
+            """
+            INSERT INTO notes
+              (course_id, node_id, title, content_json, content_text, content_format, visibility, status, summary, tags, author_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                course["id"],
+                node["id"],
+                title,
+                dumps({"ingest": "document-import", "document": extracted["metadata"]}),
+                extracted["text"],
+                payload.visibility,
+                "published" if payload.visibility == "shared" else "draft",
+                classification.get("summary", ""),
+                dumps(classification.get("tags", [])),
+                user["id"],
+                ts,
+                ts,
+            ),
+        )
+        attachment = store_attachment(
+            db,
+            settings,
+            course_id=int(course["id"]),
+            note_id=note_id,
+            mistake_id=None,
+            file_name=payload.file_name,
+            content_type=payload.content_type,
+            file_bytes=file_bytes,
+            uploaded_by=user["id"],
+        )
+        create_note_version(db, note_id, user["id"], "document import")
+        refresh_note_search_chunk(db, note_id)
+        log_audit(
+            db,
+            int(course["id"]),
+            user["id"],
+            "note.import",
+            "note",
+            note_id,
+            {
+                "file_name": attachment["file_name"],
+                "parser": extracted["metadata"]["parser"],
+                "source": classification.get("source", output.source),
+            },
+        )
+        return {
+            "note": serialize_note(get_note(db, note_id), db, user_id=user["id"]),
+            "course": serialize_course(course, db=db, user_id=user["id"]),
+            "node": serialize_node(node, db),
+            "classification": classification,
+            "attachment": attachment,
+            "document": extracted["metadata"],
+        }
+
     @app.post("/api/notes/ask")
     async def ask_notes(
         payload: NoteAskRequest,
@@ -851,54 +928,20 @@ def register_routes(app: FastAPI) -> None:
         if not payload.content_type.startswith("image/"):
             raise HTTPException(status_code=415, detail="only image uploads are supported")
 
-        try:
-            file_bytes = base64.b64decode(payload.data_base64, validate=True)
-        except (binascii.Error, ValueError):
-            raise HTTPException(status_code=400, detail="invalid base64 data")
-        if not file_bytes:
-            raise HTTPException(status_code=400, detail="empty file")
-        if len(file_bytes) > settings.max_upload_bytes:
-            raise HTTPException(status_code=413, detail="file is too large")
-
-        raw_name = Path(payload.file_name).name or "image"
-        safe_name = "".join(
-            char if char.isascii() and (char.isalnum() or char in ".-_") else "_"
-            for char in raw_name
-        ).strip("._")
-        if not safe_name:
-            safe_name = "image"
-        extension = Path(safe_name).suffix.lower()
-        if len(extension) > 12:
-            extension = ""
-        stored_name = f"{secrets.token_urlsafe(18)}{extension}"
-        storage_dir = Path(settings.file_storage_dir)
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        target = storage_dir / stored_name
-        target.write_bytes(file_bytes)
-
-        url_path = f"/api/files/{stored_name}"
-        attachment_id = db.execute(
-            """
-            INSERT INTO attachments
-              (course_id, note_id, mistake_id, file_name, stored_name, content_type, size_bytes, url_path, uploaded_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.course_id,
-                payload.note_id,
-                payload.mistake_id,
-                safe_name,
-                stored_name,
-                payload.content_type,
-                len(file_bytes),
-                url_path,
-                user["id"],
-                now_iso(),
-            ),
+        attachment = store_attachment(
+            db,
+            settings,
+            course_id=payload.course_id,
+            note_id=payload.note_id,
+            mistake_id=payload.mistake_id,
+            file_name=payload.file_name,
+            content_type=payload.content_type,
+            file_bytes=decode_upload_data(payload.data_base64, settings),
+            uploaded_by=user["id"],
         )
         return {
-            **serialize_attachment(get_attachment(db, attachment_id)),
-            "markdown": f"![{safe_name}]({url_path})",
+            **attachment,
+            "markdown": f"![{attachment['file_name']}]({attachment['url_path']})",
         }
 
     @app.get("/api/files/{stored_name}")
@@ -2181,6 +2224,155 @@ def serialize_version(row: dict[str, Any]) -> dict[str, Any]:
         "change_reason": row["change_reason"],
         "created_at": row["created_at"],
     }
+
+
+def decode_upload_data(data_base64: str, settings: Settings) -> bytes:
+    try:
+        file_bytes = base64.b64decode(data_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="invalid base64 data")
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(file_bytes) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="file is too large")
+    return file_bytes
+
+
+def safe_file_name(file_name: str, fallback: str = "file") -> str:
+    raw_name = Path(file_name).name or fallback
+    safe_name = "".join(
+        char if char.isascii() and (char.isalnum() or char in ".-_") else "_"
+        for char in raw_name
+    ).strip("._")
+    return safe_name or fallback
+
+
+def store_attachment(
+    db: Database,
+    settings: Settings,
+    *,
+    course_id: int,
+    note_id: int | None,
+    mistake_id: int | None,
+    file_name: str,
+    content_type: str,
+    file_bytes: bytes,
+    uploaded_by: int,
+) -> dict[str, Any]:
+    safe_name = safe_file_name(file_name)
+    extension = Path(safe_name).suffix.lower()
+    if len(extension) > 12:
+        extension = ""
+    stored_name = f"{secrets.token_urlsafe(18)}{extension}"
+    storage_dir = Path(settings.file_storage_dir)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    (storage_dir / stored_name).write_bytes(file_bytes)
+    url_path = f"/api/files/{stored_name}"
+    attachment_id = db.execute(
+        """
+        INSERT INTO attachments
+          (course_id, note_id, mistake_id, file_name, stored_name, content_type, size_bytes, url_path, uploaded_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            course_id,
+            note_id,
+            mistake_id,
+            safe_name,
+            stored_name,
+            content_type,
+            len(file_bytes),
+            url_path,
+            uploaded_by,
+            now_iso(),
+        ),
+    )
+    return serialize_attachment(get_attachment(db, attachment_id))
+
+
+def extract_document_text(file_name: str, content_type: str, file_bytes: bytes) -> dict[str, Any]:
+    suffix = Path(file_name).suffix.lower()
+    normalized_type = content_type.lower()
+    if suffix in {".md", ".markdown"} or normalized_type in {"text/markdown", "text/x-markdown"}:
+        text = decode_text_file(file_bytes)
+        parser = "markdown"
+    elif suffix == ".docx" or normalized_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        text = extract_docx_text(file_bytes)
+        parser = "docx-xml"
+    elif suffix == ".pdf" or normalized_type == "application/pdf":
+        text = extract_pdf_text(file_bytes)
+        parser = "pypdf"
+    else:
+        raise HTTPException(status_code=415, detail="only PDF, DOCX, and Markdown imports are supported")
+    cleaned = normalize_document_text(text)
+    return {
+        "text": cleaned,
+        "metadata": {
+            "file_name": safe_file_name(file_name),
+            "content_type": content_type,
+            "parser": parser,
+            "characters": len(cleaned),
+        },
+    }
+
+
+def decode_text_file(file_bytes: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "latin-1"):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode("utf-8", errors="replace")
+
+
+def extract_docx_text(file_bytes: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
+            xml_bytes = archive.read("word/document.xml")
+    except (KeyError, zipfile.BadZipFile):
+        raise HTTPException(status_code=422, detail="invalid docx document")
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        raise HTTPException(status_code=422, detail="invalid docx xml")
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{namespace}p"):
+        texts = [node.text or "" for node in paragraph.iter(f"{namespace}t")]
+        line = "".join(texts).strip()
+        if line:
+            paragraphs.append(line)
+    return "\n".join(paragraphs)
+
+
+def extract_pdf_text(file_bytes: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(file_bytes))
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"pdf text extraction failed: {exc}")
+
+
+def normalize_document_text(text: str) -> str:
+    lines = [line.strip() for line in (text or "").replace("\r", "\n").splitlines()]
+    cleaned_lines: list[str] = []
+    blank = False
+    for line in lines:
+        if not line:
+            if not blank and cleaned_lines:
+                cleaned_lines.append("")
+            blank = True
+            continue
+        cleaned_lines.append(line)
+        blank = False
+    return "\n".join(cleaned_lines).strip()
+
+
+def document_title(file_name: str) -> str:
+    title = Path(file_name).stem.strip() or "导入笔记"
+    return title[:180]
 
 
 def get_attachment(db: Database, attachment_id: int) -> dict[str, Any]:

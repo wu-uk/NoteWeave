@@ -84,6 +84,14 @@ class NoteIngestRequest(BaseModel):
     tags: list[str] = []
 
 
+class NoteImportRequest(BaseModel):
+    file_name: str = Field(min_length=1, max_length=180)
+    content_type: str = Field(min_length=1, max_length=160)
+    data_base64: str = Field(min_length=1)
+    visibility: Literal["private", "shared"] = "private"
+    tags: list[str] = []
+
+
 class NoteAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     course_id: int | None = None

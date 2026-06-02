@@ -2,6 +2,7 @@ import type {
   AiStatus,
   AiResult,
   AiTaskType,
+  Attachment,
   Comment,
   Course,
   CourseMember,
@@ -11,6 +12,7 @@ import type {
   Mistake,
   Note,
   NoteAskResult,
+  NoteImportResult,
   NoteIngestResult,
   NoteVersion,
   SearchResult,
@@ -204,6 +206,19 @@ export const api = {
     });
   },
 
+  importNoteDocument(payload: {
+    file_name: string;
+    content_type: string;
+    data_base64: string;
+    visibility: "private" | "shared";
+    tags: string[];
+  }) {
+    return request<NoteImportResult>("/api/notes/import", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   updateNote(noteId: number, payload: {
     node_id?: number | null;
     title?: string;
@@ -232,6 +247,20 @@ export const api = {
 
   askNotes(payload: { question: string; course_id?: number | null; limit?: number }) {
     return request<NoteAskResult>("/api/notes/ask", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createAttachment(payload: {
+    course_id: number;
+    note_id?: number | null;
+    mistake_id?: number | null;
+    file_name: string;
+    content_type: string;
+    data_base64: string;
+  }) {
+    return request<Attachment>("/api/attachments", {
       method: "POST",
       body: JSON.stringify(payload)
     });

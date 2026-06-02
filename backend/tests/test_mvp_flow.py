@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import zipfile
+from io import BytesIO
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +13,21 @@ from noteweave.core.settings import Settings
 
 def auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def make_docx_bytes(text: str) -> bytes:
+    buffer = BytesIO()
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body>"
+        f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+        "</w:body>"
+        "</w:document>"
+    )
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml", document_xml)
+    return buffer.getvalue()
 
 
 @pytest.mark.anyio
@@ -1031,3 +1048,68 @@ async def test_node_move_rejects_cyclic_hierarchy(tmp_path):
             json={"parent_id": root_id, "order_index": 0},
         )
         assert move_to_root_res.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_document_import_creates_classified_notes_and_qa_context(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        auth_res = await client.post(
+            "/api/auth/register",
+            json={"username": "importer", "password": "password123", "display_name": "Importer"},
+        )
+        assert auth_res.status_code == 200
+        headers = auth_headers(auth_res.json()["token"])
+
+        markdown = "# Dijkstra\n\nDijkstra only works with non-negative graph edges."
+        md_res = await client.post(
+            "/api/notes/import",
+            headers=headers,
+            json={
+                "file_name": "dijkstra.md",
+                "content_type": "text/markdown",
+                "data_base64": base64.b64encode(markdown.encode("utf-8")).decode("ascii"),
+                "visibility": "shared",
+                "tags": ["graph"],
+            },
+        )
+        assert md_res.status_code == 200
+        imported = md_res.json()
+        assert imported["note"]["title"] == "dijkstra"
+        assert "non-negative graph edges" in imported["note"]["content_text"]
+        assert imported["classification"]["course_name"]
+        assert imported["document"]["parser"] == "markdown"
+        assert imported["attachment"]["file_name"] == "dijkstra.md"
+
+        docx_res = await client.post(
+            "/api/notes/import",
+            headers=headers,
+            json={
+                "file_name": "sorting.docx",
+                "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "data_base64": base64.b64encode(make_docx_bytes("Quick sort uses partitioning.")).decode("ascii"),
+                "visibility": "private",
+                "tags": ["sorting"],
+            },
+        )
+        assert docx_res.status_code == 200
+        assert docx_res.json()["document"]["parser"] == "docx-xml"
+        assert "Quick sort uses partitioning." in docx_res.json()["note"]["content_text"]
+
+        qa_res = await client.post(
+            "/api/notes/ask",
+            headers=headers,
+            json={"question": "When does Dijkstra work?", "limit": 5},
+        )
+        assert qa_res.status_code == 200
+        qa = qa_res.json()
+        assert qa["source"] == "fallback"
+        assert qa["contexts"]
+        assert any("Dijkstra" in context["title"] or "Dijkstra" in context["content"] for context in qa["contexts"])

@@ -201,6 +201,16 @@ export type NoteIngestResult = {
   };
 };
 
+export type NoteImportResult = NoteIngestResult & {
+  attachment: Attachment;
+  document: {
+    file_name: string;
+    content_type: string;
+    parser: string;
+    characters: number;
+  };
+};
+
 export type NoteAskContext = {
   source_type: "note";
   source_id: number;
@@ -217,4 +227,18 @@ export type NoteAskResult = {
   answer: string;
   source: string;
   contexts: NoteAskContext[];
+};
+
+export type Attachment = {
+  id: number;
+  course_id: number;
+  note_id?: number | null;
+  mistake_id?: number | null;
+  file_name: string;
+  content_type: string;
+  size_bytes: number;
+  url_path: string;
+  uploaded_by: number;
+  created_at: string;
+  markdown?: string;
 };
