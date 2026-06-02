@@ -89,6 +89,12 @@ export const api = {
     });
   },
 
+  logout() {
+    return request<{ status: string }>("/api/auth/logout", {
+      method: "POST"
+    });
+  },
+
   me() {
     return request<User>("/api/auth/me");
   },

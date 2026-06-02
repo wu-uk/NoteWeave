@@ -82,6 +82,10 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
             json={"current_password": "password123", "new_password": "new-password123"},
         )
         assert password_update_res.status_code == 200
+        logout_res = await client.post("/api/auth/logout", headers=alice)
+        assert logout_res.status_code == 200
+        logged_out_me_res = await client.get("/api/auth/me", headers=alice)
+        assert logged_out_me_res.status_code == 401
         old_login_res = await client.post(
             "/api/auth/login",
             json={"username": "alice", "password": "password123"},
@@ -92,6 +96,8 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
             json={"username": "alice", "password": "new-password123"},
         )
         assert new_login_res.status_code == 200
+        alice_token = new_login_res.json()["token"]
+        alice = auth_headers(alice_token)
 
         ai_status_res = await client.get("/api/ai/config/status", headers=alice)
         assert ai_status_res.status_code == 200

@@ -477,7 +477,8 @@ async function register(): Promise<void> {
   });
 }
 
-function logout(): void {
+async function logout(): Promise<void> {
+  await api.logout().catch(() => undefined);
   setToken("");
   user.value = null;
   courses.value = [];
