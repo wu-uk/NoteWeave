@@ -127,7 +127,7 @@
           <div class="note-card-top">
             <div>
               <strong>{{ note.title }}</strong>
-              <small>{{ note.node_path || "AI 分类中" }} · {{ visibilityLabel(note.visibility) }} · {{ note.updated_at?.slice(0, 10) }}</small>
+              <small>{{ note.author_name || "未知作者" }} · {{ note.node_path || "AI 分类中" }} · {{ visibilityLabel(note.visibility) }} · {{ note.updated_at?.slice(0, 10) }}</small>
             </div>
             <button type="button" class="icon-button" title="编辑" @click.stop="editNote(note)">
               <Pencil :size="14" />
@@ -463,9 +463,9 @@ async function loadAiStatus(): Promise<void> {
 
 async function loadCoursesAndNotes(): Promise<void> {
   if (!user.value) return;
-  courses.value = await api.listCourses();
-  const groups = await Promise.all(courses.value.map((course) => api.listNotes(course.id)));
-  notes.value = groups.flat().sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+  const [courseList, noteFeed] = await Promise.all([api.listCourses(), api.listNoteFeed()]);
+  courses.value = courseList;
+  notes.value = noteFeed;
   if (activeNote.value) {
     activeNote.value = notes.value.find((note) => note.id === activeNote.value?.id) || notes.value[0] || null;
   } else {

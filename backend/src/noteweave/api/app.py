@@ -759,7 +759,13 @@ def register_routes(app: FastAPI) -> None:
             course_ids = [payload.course_id]
         for course_id in course_ids:
             backfill_course_search_chunks(db, course_id)
-        contexts = retrieve_note_contexts(db, user["id"], payload.question, course_ids, payload.limit)
+        contexts = retrieve_note_contexts(
+            db,
+            user["id"],
+            payload.question,
+            course_ids if payload.course_id is not None else None,
+            payload.limit,
+        )
         output = await AIAssistService(settings).answer_question(payload.question, contexts)
         return {
             "answer": output.result.get("answer", ""),
@@ -799,6 +805,25 @@ def register_routes(app: FastAPI) -> None:
         rows = db.all(
             f"SELECT * FROM notes WHERE {' AND '.join(clauses)} ORDER BY {sort_columns[sort]} LIMIT ? OFFSET ?",
             tuple([*params, limit, offset]),
+        )
+        return [serialize_note(row, db, user_id=user["id"]) for row in rows]
+
+    @app.get("/api/notes/feed")
+    async def note_feed(
+        limit: int = Query(default=100, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        rows = db.all(
+            """
+            SELECT *
+            FROM notes
+            WHERE visibility = 'shared' OR author_id = ?
+            ORDER BY updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (user["id"], limit, offset),
         )
         return [serialize_note(row, db, user_id=user["id"]) for row in rows]
 
@@ -1118,8 +1143,6 @@ def register_routes(app: FastAPI) -> None:
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
-        course_id = target_course_id(db, payload.target_type, payload.target_id)
-        ensure_member(db, course_id, user["id"])
         ensure_comment_target_access(db, payload.target_type, payload.target_id, user["id"])
         comment_id = db.execute(
             "INSERT INTO comments (target_type, target_id, content, author_id, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -1127,7 +1150,7 @@ def register_routes(app: FastAPI) -> None:
         )
         if payload.target_type == "note":
             db.execute("UPDATE notes SET comment_count = comment_count + 1 WHERE id = ?", (payload.target_id,))
-        return serialize_comment(get_comment(db, comment_id))
+        return serialize_comment(get_comment(db, comment_id), db)
 
     @app.get("/api/comments")
     async def list_comments(
@@ -1138,8 +1161,6 @@ def register_routes(app: FastAPI) -> None:
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
-        course_id = target_course_id(db, target_type, target_id)
-        ensure_member(db, course_id, user["id"])
         ensure_comment_target_access(db, target_type, target_id, user["id"])
         rows = db.all(
             """
@@ -1150,7 +1171,7 @@ def register_routes(app: FastAPI) -> None:
             """,
             (target_type, target_id, limit, offset),
         )
-        return [serialize_comment(row) for row in rows]
+        return [serialize_comment(row, db) for row in rows]
 
     @app.post("/api/reactions")
     async def create_reaction(
@@ -1158,12 +1179,14 @@ def register_routes(app: FastAPI) -> None:
         user: dict[str, Any] = Depends(current_user),
         db: Database = Depends(get_db),
     ):
-        course_id = target_course_id(db, payload.target_type, payload.target_id)
-        ensure_member(db, course_id, user["id"])
         if payload.target_type == "note":
             ensure_note_access(db, get_note(db, payload.target_id), user["id"])
         elif payload.target_type == "mistake":
+            course_id = target_course_id(db, payload.target_type, payload.target_id)
+            ensure_member(db, course_id, user["id"])
             ensure_mistake_access(db, get_mistake(db, payload.target_id), user["id"])
+        else:
+            raise HTTPException(status_code=400, detail="unsupported reaction target")
         try:
             reaction_id = db.execute(
                 "INSERT INTO reactions (target_type, target_id, reaction_type, user_id, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -1937,7 +1960,7 @@ def node_recent_comments(
         )
         comments.extend(
             {
-                **serialize_comment(row),
+                **serialize_comment(row, db),
                 "target_title": target_title,
             }
             for row in rows
@@ -2157,6 +2180,7 @@ def serialize_note(
     user_id: int | None = None,
 ) -> dict[str, Any]:
     node = db.one("SELECT id, title, path FROM knowledge_nodes WHERE id = ?", (row["node_id"],)) if row["node_id"] else None
+    author = db.one("SELECT display_name FROM users WHERE id = ?", (row["author_id"],))
     favorite_reaction_id = reaction_id(db, "note", int(row["id"]), user_id, "favorite") if user_id is not None else None
     like_reaction_id = reaction_id(db, "note", int(row["id"]), user_id, "like") if user_id is not None else None
     data = {
@@ -2173,6 +2197,7 @@ def serialize_note(
         "summary": row["summary"],
         "tags": loads(row["tags"], []),
         "author_id": row["author_id"],
+        "author_name": author["display_name"] if author else None,
         "like_count": row["like_count"],
         "comment_count": row["comment_count"],
         "is_liked": like_reaction_id is not None,
@@ -2187,14 +2212,15 @@ def serialize_note(
             "SELECT * FROM comments WHERE target_type = 'note' AND target_id = ? ORDER BY created_at",
             (row["id"],),
         )
-        data["comments"] = [serialize_comment(c) for c in comments]
+        data["comments"] = [serialize_comment(c, db) for c in comments]
     return data
 
 
 def ensure_note_access(db: Database, note: dict[str, Any], user_id: int) -> None:
+    if can_access_note(note, user_id):
+        return
     ensure_member(db, int(note["course_id"]), user_id)
-    if not can_access_note(note, user_id):
-        raise HTTPException(status_code=403, detail="note is private")
+    raise HTTPException(status_code=403, detail="note is private")
 
 
 def can_access_note(note: dict[str, Any], user_id: int) -> bool:
@@ -2562,13 +2588,15 @@ def get_comment(db: Database, comment_id: int) -> dict[str, Any]:
     return row
 
 
-def serialize_comment(row: dict[str, Any]) -> dict[str, Any]:
+def serialize_comment(row: dict[str, Any], db: Database | None = None) -> dict[str, Any]:
+    author = db.one("SELECT display_name FROM users WHERE id = ?", (row["author_id"],)) if db else None
     return {
         "id": row["id"],
         "target_type": row["target_type"],
         "target_id": row["target_id"],
         "content": row["content"],
         "author_id": row["author_id"],
+        "author_name": author["display_name"] if author else None,
         "created_at": row["created_at"],
     }
 
@@ -2686,22 +2714,27 @@ def retrieve_note_contexts(
     db: Database,
     user_id: int,
     question: str,
-    course_ids: list[int],
+    course_ids: list[int] | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    if not course_ids:
-        return []
     query_terms = search_terms(question)
-    placeholders = ",".join("?" for _ in course_ids)
+    course_filter = ""
+    params: tuple[Any, ...] = ()
+    if course_ids is not None:
+        if not course_ids:
+            return []
+        placeholders = ",".join("?" for _ in course_ids)
+        course_filter = f"AND sc.course_id IN ({placeholders})"
+        params = tuple(course_ids)
     rows = db.all(
         f"""
         SELECT sc.*
         FROM search_chunks sc
-        WHERE sc.course_id IN ({placeholders})
-          AND sc.source_type = 'note'
+        WHERE sc.source_type = 'note'
+          {course_filter}
         ORDER BY sc.updated_at DESC
         """,
-        tuple(course_ids),
+        params,
     )
     contexts: list[dict[str, Any]] = []
     for row in rows:

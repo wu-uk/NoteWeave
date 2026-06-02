@@ -179,6 +179,11 @@ export const api = {
     return request<Note[]>(`/api/notes?${params.toString()}`);
   },
 
+  listNoteFeed(limit = 100) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return request<Note[]>(`/api/notes/feed?${params.toString()}`);
+  },
+
   createNote(payload: {
     course_id: number;
     node_id: number | null;

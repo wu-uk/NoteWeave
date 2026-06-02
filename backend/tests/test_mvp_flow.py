@@ -1104,6 +1104,7 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert docx_res.status_code == 200
         assert docx_res.json()["document"]["parser"] == "docx-xml"
         assert "Quick sort uses partitioning." in docx_res.json()["note"]["content_text"]
+        private_note_id = docx_res.json()["note"]["id"]
 
         qa_res = await client.post(
             "/api/notes/ask",
@@ -1115,3 +1116,46 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert qa["source"] == "fallback"
         assert qa["contexts"]
         assert any("Dijkstra" in context["title"] or "Dijkstra" in context["content"] for context in qa["contexts"])
+
+        bob_res = await client.post(
+            "/api/auth/register",
+            json={"username": "reader", "password": "password123", "display_name": "Reader"},
+        )
+        assert bob_res.status_code == 200
+        bob = auth_headers(bob_res.json()["token"])
+
+        feed_res = await client.get("/api/notes/feed", headers=bob)
+        assert feed_res.status_code == 200
+        feed = feed_res.json()
+        assert any(note["id"] == imported["note"]["id"] for note in feed)
+        assert all(note["id"] != private_note_id for note in feed)
+
+        comment_res = await client.post(
+            "/api/comments",
+            headers=bob,
+            json={"target_type": "note", "target_id": imported["note"]["id"], "content": "Helpful shared note."},
+        )
+        assert comment_res.status_code == 200
+        assert comment_res.json()["author_name"] == "Reader"
+
+        reaction_res = await client.post(
+            "/api/reactions",
+            headers=bob,
+            json={"target_type": "note", "target_id": imported["note"]["id"], "reaction_type": "like"},
+        )
+        assert reaction_res.status_code == 200
+
+        bob_qa_res = await client.post(
+            "/api/notes/ask",
+            headers=bob,
+            json={"question": "Dijkstra graph edges", "limit": 5},
+        )
+        assert bob_qa_res.status_code == 200
+        assert any(context["source_id"] == imported["note"]["id"] for context in bob_qa_res.json()["contexts"])
+
+        private_comment_res = await client.post(
+            "/api/comments",
+            headers=bob,
+            json={"target_type": "note", "target_id": private_note_id, "content": "Should not work."},
+        )
+        assert private_comment_res.status_code == 403
