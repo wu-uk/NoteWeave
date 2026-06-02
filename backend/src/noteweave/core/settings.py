@@ -79,6 +79,12 @@ def load_config(project_root: Path) -> dict[str, Any]:
     config_path = Path(raw_path).expanduser()
     if not config_path.is_absolute():
         config_path = project_root / config_path
+    if raw_path == "config.yaml" and not config_path.exists():
+        for fallback_name in ("config.ymal", "config.yml"):
+            fallback_path = project_root / fallback_name
+            if fallback_path.exists():
+                config_path = fallback_path
+                break
     if not config_path.exists():
         return {}
     return parse_simple_yaml(config_path.read_text(encoding="utf-8"))

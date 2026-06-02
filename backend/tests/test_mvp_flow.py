@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import base64
 import zipfile
+from dataclasses import replace
 from io import BytesIO
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from noteweave.api.app import create_app
-from noteweave.core.ai import AIAssistService
 from noteweave.core.settings import Settings
 
 
@@ -1231,34 +1231,60 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
 
 
 @pytest.mark.anyio
-async def test_real_ai_api_classifies_and_answers_from_config():
+async def test_real_ai_api_flows_through_note_endpoints(tmp_path):
     settings = Settings.load()
     if not (settings.model_base_url and settings.model_api_key and settings.chat_model):
         pytest.skip("real AI API config is not available")
 
-    service = AIAssistService(settings)
-    classification = await service.classify_note(
-        "Dijkstra shortest path",
-        "Dijkstra algorithm works on graphs with non-negative edge weights and uses a priority queue.",
-        ["graph"],
+    app = create_app(
+        replace(
+            settings,
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
     )
-    assert classification.source == "remote"
-    assert classification.result["source"] == "remote"
-    assert classification.result["course_name"]
-    assert classification.result["node_title"]
-    assert classification.result["summary"]
-    assert classification.result["tags"]
 
-    answer = await service.answer_question(
-        "What edge weights does Dijkstra require?",
-        [
-            {
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        auth_res = await client.post(
+            "/api/auth/register",
+            json={"username": "real-ai", "password": "password123", "display_name": "Real AI"},
+        )
+        assert auth_res.status_code == 200
+        headers = auth_headers(auth_res.json()["token"])
+
+        status_res = await client.get("/api/ai/config/status", headers=headers)
+        assert status_res.status_code == 200
+        status = status_res.json()
+        assert status["remote_configured"] is True
+        assert status["api_key_configured"] is True
+        assert "model_api_key" not in status
+
+        ingest_res = await client.post(
+            "/api/notes/ingest",
+            headers=headers,
+            json={
                 "title": "Dijkstra shortest path",
-                "node_path": "Computer Science / Graph Algorithms",
-                "content": "Dijkstra algorithm works on graphs with non-negative edge weights.",
-            }
-        ],
-    )
-    assert answer.source == "remote"
-    assert answer.result["source"] == "remote"
-    assert answer.result["answer"].strip()
+                "content_text": "Dijkstra algorithm works on graphs with non-negative edge weights and uses a priority queue.",
+                "visibility": "shared",
+                "tags": ["graph"],
+            },
+        )
+        assert ingest_res.status_code == 200
+        ingested = ingest_res.json()
+        assert ingested["classification"]["source"] == "remote"
+        assert ingested["classification"]["course_name"]
+        assert ingested["classification"]["node_title"]
+        assert ingested["classification"]["summary"]
+        assert ingested["classification"]["tags"]
+
+        ask_res = await client.post(
+            "/api/notes/ask",
+            headers=headers,
+            json={"question": "What edge weights does Dijkstra require?", "limit": 5},
+        )
+        assert ask_res.status_code == 200
+        answer = ask_res.json()
+        assert answer["source"] == "remote"
+        assert answer["answer"].strip()
+        assert any(context["source_id"] == ingested["note"]["id"] for context in answer["contexts"])
