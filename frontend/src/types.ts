@@ -4,8 +4,7 @@ export type User = {
   id: number;
   username: string;
   display_name: string;
-  role?: string;
-  system_role?: string;
+  system_role: "user" | "admin";
 };
 
 export type Course = {

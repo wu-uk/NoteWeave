@@ -52,6 +52,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert alice_res.status_code == 200
         alice_token = alice_res.json()["token"]
         alice_id = alice_res.json()["user"]["id"]
+        assert alice_res.json()["user"]["system_role"] == "user"
         alice = auth_headers(alice_token)
 
         profile_update_res = await client.patch(
@@ -64,6 +65,7 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         me_res = await client.get("/api/auth/me", headers=alice)
         assert me_res.status_code == 200
         assert me_res.json()["display_name"] == "Alice Cooper"
+        assert me_res.json()["system_role"] == "user"
         wrong_password_update_res = await client.patch(
             "/api/auth/me",
             headers=alice,

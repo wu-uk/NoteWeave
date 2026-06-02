@@ -56,6 +56,7 @@ class Database:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            conn.execute("UPDATE users SET system_role = 'user' WHERE system_role = 'student'")
             conn.commit()
 
     def one(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
@@ -87,7 +88,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   display_name TEXT NOT NULL,
-  system_role TEXT NOT NULL DEFAULT 'student',
+  system_role TEXT NOT NULL DEFAULT 'user',
   created_at TEXT NOT NULL
 );
 

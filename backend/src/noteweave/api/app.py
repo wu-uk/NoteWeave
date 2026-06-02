@@ -1530,11 +1530,14 @@ def get_user(db: Database, user_id: int) -> dict[str, Any]:
 
 
 def serialize_user(row: dict[str, Any]) -> dict[str, Any]:
+    system_role = row["system_role"]
+    if system_role == "student":
+        system_role = "user"
     return {
         "id": row["id"],
         "username": row["username"],
         "display_name": row["display_name"],
-        "system_role": row["system_role"],
+        "system_role": system_role,
         "created_at": row["created_at"],
     }
 
