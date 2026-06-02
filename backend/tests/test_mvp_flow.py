@@ -60,6 +60,90 @@ def make_pdf_bytes(text: str) -> bytes:
 
 
 @pytest.mark.anyio
+async def test_note_first_edit_delete_and_shared_write_protection(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        alice_res = await client.post(
+            "/api/auth/register",
+            json={"username": "alice", "password": "password123", "display_name": "Alice"},
+        )
+        assert alice_res.status_code == 200
+        alice = auth_headers(alice_res.json()["token"])
+
+        ingest_res = await client.post(
+            "/api/notes/ingest",
+            headers=alice,
+            json={
+                "title": "Heap note",
+                "content_text": "A binary heap supports efficient priority queue operations.",
+                "visibility": "shared",
+                "tags": ["heap"],
+            },
+        )
+        assert ingest_res.status_code == 200
+        note = ingest_res.json()["note"]
+
+        update_res = await client.patch(
+            f"/api/notes/{note['id']}",
+            headers=alice,
+            json={
+                "title": "Updated heap note",
+                "content_text": "A Fibonacci heap supports decrease-key operations.",
+                "visibility": "private",
+                "status": "draft",
+                "tags": ["heap", "priority-queue"],
+            },
+        )
+        assert update_res.status_code == 200
+        updated = update_res.json()
+        assert updated["title"] == "Updated heap note"
+        assert updated["visibility"] == "private"
+        assert "priority-queue" in updated["tags"]
+
+        own_search_res = await client.get("/api/notes/feed?q=Fibonacci", headers=alice)
+        assert own_search_res.status_code == 200
+        assert [item["id"] for item in own_search_res.json()] == [note["id"]]
+
+        publish_res = await client.post(f"/api/notes/{note['id']}/publish", headers=alice)
+        assert publish_res.status_code == 200
+        assert publish_res.json()["visibility"] == "shared"
+
+        bob_res = await client.post(
+            "/api/auth/register",
+            json={"username": "bob", "password": "password123", "display_name": "Bob"},
+        )
+        assert bob_res.status_code == 200
+        bob = auth_headers(bob_res.json()["token"])
+
+        bob_update_res = await client.patch(
+            f"/api/notes/{note['id']}",
+            headers=bob,
+            json={"title": "Hijacked note"},
+        )
+        assert bob_update_res.status_code == 403
+
+        bob_delete_res = await client.delete(f"/api/notes/{note['id']}", headers=bob)
+        assert bob_delete_res.status_code == 403
+
+        delete_res = await client.delete(f"/api/notes/{note['id']}", headers=alice)
+        assert delete_res.status_code == 200
+
+        deleted_detail_res = await client.get(f"/api/notes/{note['id']}", headers=alice)
+        assert deleted_detail_res.status_code == 404
+
+        deleted_search_res = await client.get("/api/notes/feed?q=Fibonacci", headers=alice)
+        assert deleted_search_res.status_code == 200
+        assert deleted_search_res.json() == []
+
+
+@pytest.mark.anyio
 async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
     app = create_app(
         Settings(
