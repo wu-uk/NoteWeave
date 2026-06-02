@@ -162,7 +162,7 @@
               <strong>{{ note.title }}</strong>
               <small>{{ note.author_name || "未知作者" }} · {{ note.node_path || "AI 分类中" }} · {{ visibilityLabel(note.visibility) }} · {{ note.updated_at?.slice(0, 10) }}</small>
             </div>
-            <button type="button" class="icon-button" title="编辑" @click.stop="editNote(note)">
+            <button v-if="canManageNote(note)" type="button" class="icon-button" title="编辑" @click.stop="editNote(note)">
               <Pencil :size="14" />
             </button>
           </div>
@@ -171,7 +171,7 @@
             <span v-for="tag in note.tags" :key="tag">{{ tag }}</span>
           </div>
           <div class="action-row">
-            <button v-if="note.visibility !== 'shared'" type="button" class="ghost-button" @click.stop="publishNote(note)">
+            <button v-if="canManageNote(note) && note.visibility !== 'shared'" type="button" class="ghost-button" @click.stop="publishNote(note)">
               <Share2 :size="14" />
               共享
             </button>
@@ -183,15 +183,15 @@
               <MessageSquare :size="14" />
               {{ note.comment_count || 0 }}
             </button>
-            <button type="button" class="ghost-button" @click.stop="generateAi(note, 'summary')">
+            <button v-if="canManageNote(note)" type="button" class="ghost-button" @click.stop="generateAi(note, 'summary')">
               <Sparkles :size="14" />
               摘要
             </button>
-            <button type="button" class="ghost-button" @click.stop="generateAi(note, 'tags')">
+            <button v-if="canManageNote(note)" type="button" class="ghost-button" @click.stop="generateAi(note, 'tags')">
               <Tags :size="14" />
               标签
             </button>
-            <button type="button" class="ghost-button danger-soft" @click.stop="deleteNote(note)">
+            <button v-if="canManageNote(note)" type="button" class="ghost-button danger-soft" @click.stop="deleteNote(note)">
               <Trash2 :size="14" />
               删除
             </button>
@@ -636,6 +636,10 @@ function editNote(note: Note): void {
 
 function setActiveNote(note: Note): void {
   activeNote.value = note;
+}
+
+function canManageNote(note: Note): boolean {
+  return Boolean(user.value && note.author_id === user.value.id);
 }
 
 async function publishNote(note: Note): Promise<void> {
