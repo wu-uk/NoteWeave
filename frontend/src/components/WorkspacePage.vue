@@ -35,29 +35,46 @@
     </section>
   </main>
 
-  <main v-else class="app-shell">
-    <aside class="rail">
-      <button class="brand-button" type="button" @click="$emit('home')">
+  <main v-else class="app-shell knowledge-app">
+    <aside class="workspace-nav">
+      <button class="brand-button nav-brand" type="button" @click="showNetwork">
         <span class="brand-mark">N</span>
         <span>
           <strong>NoteWeave</strong>
-          <small>note first workspace</small>
+          <small>knowledge graph</small>
         </span>
       </button>
 
-      <section class="quiet-panel">
-        <div class="panel-kicker">
-          <UserRound :size="15" />
-          <span>账号</span>
-        </div>
-        <div v-if="user" class="account-card">
+      <section class="nav-account">
+        <div>
           <strong>{{ user.display_name || user.username }}</strong>
           <small>@{{ user.username }} · {{ user.system_role === "admin" ? "管理员" : "普通用户" }}</small>
-          <button type="button" class="ghost-button" @click="logout">退出</button>
         </div>
+        <button type="button" class="icon-button" title="退出" @click="logout">
+          <LogOut :size="15" />
+        </button>
       </section>
 
-      <section v-if="user?.system_role === 'admin'" class="quiet-panel admin-panel">
+      <nav class="primary-nav" aria-label="工作台导航">
+        <button type="button" :class="{ active: activeView === 'personal' }" @click="activeView = 'personal'">
+          <BookOpen :size="17" />
+          <span>个人笔记</span>
+        </button>
+        <button type="button" :class="{ active: activeView === 'shared' }" @click="activeView = 'shared'">
+          <Users :size="17" />
+          <span>共享笔记</span>
+        </button>
+        <button type="button" :class="{ active: activeView === 'mistakes' }" @click="activeView = 'mistakes'">
+          <ClipboardList :size="17" />
+          <span>错题整理</span>
+        </button>
+        <button type="button" :class="{ active: activeView === 'daily' }" @click="activeView = 'daily'">
+          <CalendarDays :size="17" />
+          <span>每日一题</span>
+        </button>
+      </nav>
+
+      <section v-if="user?.system_role === 'admin'" class="nav-admin">
         <div class="panel-kicker">
           <ShieldCheck :size="15" />
           <span>管理员</span>
@@ -71,224 +88,315 @@
             <strong>{{ adminOverview.stats.user_count }}</strong>
           </div>
           <div>
-            <small>共享笔记</small>
+            <small>共享</small>
             <strong>{{ adminOverview.stats.shared_note_count }}</strong>
           </div>
           <div>
-            <small>导入文件</small>
+            <small>导入</small>
             <strong>{{ adminOverview.stats.attachment_count }}</strong>
           </div>
           <div>
-            <small>AI 结果</small>
+            <small>AI</small>
             <strong>{{ adminOverview.stats.ai_result_count }}</strong>
           </div>
         </div>
-        <div v-if="adminOverview" class="admin-meta">
-          <small>AI</small>
-          <span>{{ adminOverview.ai.remote_configured ? `已配置 ${adminOverview.ai.chat_model}` : "未配置远程模型" }}</span>
-        </div>
-        <p v-else class="empty-text">管理员概览加载中。</p>
       </section>
 
-      <section class="quiet-panel">
-        <div class="panel-kicker">
-          <FolderKanban :size="15" />
-          <span>AI 分类</span>
-          <button type="button" class="icon-button" title="刷新" @click="loadWorkspace">
-            <RefreshCcw :size="14" />
-          </button>
-        </div>
-        <button type="button" class="folder-row" :class="{ active: selectedCourseId === null }" @click="selectCourse(null)">
-          <span>全部笔记</span>
-          <small>{{ notes.length }} 条</small>
-        </button>
-        <button
-          v-for="course in courses"
-          :key="course.id"
-          type="button"
-          class="folder-row"
-          :class="{ active: selectedCourseId === course.id }"
-          @click="selectCourse(course.id)"
-        >
-          <span>{{ course.name }}</span>
-          <small>{{ course.note_count || 0 }} 条 · AI</small>
-        </button>
-        <p v-if="user && !courses.length" class="empty-text">保存第一条笔记后，AI 会自动生成分类。</p>
+      <section class="nav-status">
+        <span :class="['status-pill', backendReady ? 'ok' : 'warn']">
+          <Activity :size="14" />
+          {{ backendReady ? "API 在线" : "API 未连接" }}
+        </span>
+        <span class="status-pill">
+          <Sparkles :size="14" />
+          {{ aiStatus?.remote_configured ? aiStatus.chat_model : "Fallback AI" }}
+        </span>
       </section>
     </aside>
 
-    <section class="note-stage">
-      <header class="top-strip">
+    <section class="workspace-surface">
+      <header class="workspace-top">
         <div>
-          <small>笔记中心</small>
-          <h1>先记录，再由 AI 归档</h1>
+          <small>{{ viewKicker }}</small>
+          <h1>{{ viewTitle }}</h1>
         </div>
-        <div class="status-cluster">
-          <span :class="['status-pill', backendReady ? 'ok' : 'warn']">
-            <Activity :size="14" />
-            {{ backendReady ? "API 在线" : "API 未连接" }}
-          </span>
-          <span class="status-pill">
-            <Sparkles :size="14" />
-            {{ aiStatus?.remote_configured ? `模型 ${aiStatus.chat_model}` : "Fallback AI" }}
-          </span>
+        <div class="top-actions">
+          <button type="button" class="ghost-button" @click="showNetwork">
+            <Network :size="15" />
+            知识网络
+          </button>
+          <button type="button" class="ghost-button" :disabled="importingDocument" @click="triggerDocumentImport">
+            <FileUp :size="15" />
+            {{ importingDocument ? "解析中" : "上传" }}
+          </button>
+          <button type="button" class="primary-button" @click="startNewNote">
+            <Plus :size="15" />
+            新建
+          </button>
+          <input
+            ref="documentInput"
+            class="visually-hidden"
+            type="file"
+            accept=".pdf,.docx,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain"
+            @change="importDocument"
+          />
         </div>
       </header>
 
-      <section class="composer">
-        <div class="composer-head">
-          <div>
-            <span>Capture</span>
-            <h2>{{ draft.editingId ? "编辑笔记" : "添加笔记" }}</h2>
-          </div>
-          <select v-model="draft.visibility" aria-label="可见性">
-            <option value="private">个人</option>
-            <option value="shared">共享</option>
-          </select>
-        </div>
-        <form class="composer-form" @submit.prevent="saveNote">
-          <input v-model.trim="draft.title" placeholder="标题，例如：Dijkstra 的适用条件" />
-          <textarea v-model="draft.content" placeholder="写课堂记录、摘录、错题思路、代码片段。AI 会判断课程和知识点。" />
-          <div class="composer-actions">
-            <input v-model.trim="draft.tags" placeholder="可选标签，用逗号分隔" />
-            <button type="button" class="ghost-button" :disabled="importingDocument" @click="triggerDocumentImport">
-              <FileUp :size="15" />
-              {{ importingDocument ? "解析中" : "导入文件" }}
-            </button>
-            <input
-              ref="documentInput"
-              class="visually-hidden"
-              type="file"
-              accept=".pdf,.docx,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain"
-              @change="importDocument"
+      <section v-if="activeView === 'network'" class="knowledge-view">
+        <div class="graph-panel">
+          <svg class="graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <line
+              v-for="link in networkLinks"
+              :key="link.id"
+              :x1="link.from.x"
+              :y1="link.from.y"
+              :x2="link.to.x"
+              :y2="link.to.y"
             />
-            <button v-if="draft.editingId" type="button" class="ghost-button" @click="resetDraft">取消编辑</button>
-            <button type="submit" class="primary-button">
-              <UploadCloud :size="15" />
-              {{ draft.editingId ? "更新" : "保存并解析" }}
-            </button>
+          </svg>
+          <button
+            v-for="node in networkNodes"
+            :key="node.id"
+            type="button"
+            class="graph-node"
+            :class="[node.kind, { active: selectedGraphNodeId === node.id }]"
+            :style="{ left: `${node.x}%`, top: `${node.y}%` }"
+            @click="selectGraphNode(node)"
+          >
+            <span>{{ node.short }}</span>
+            <strong>{{ node.label }}</strong>
+            <small>{{ node.meta }}</small>
+          </button>
+          <div v-if="!networkNodes.length" class="network-empty">
+            <Sparkles :size="18" />
+            <strong>还没有知识网络</strong>
+            <span>保存或上传第一条笔记后，AI 会自动归档并生成节点。</span>
           </div>
-        </form>
-      </section>
-
-      <section class="feed-header">
-        <div>
-          <small>{{ selectedCourseName }}</small>
-          <h2>笔记流</h2>
         </div>
-        <div class="search-box">
-          <Search :size="15" />
-          <input v-model.trim="keyword" placeholder="搜索可见笔记" @input="scheduleFeedSearch" />
-        </div>
-      </section>
 
-      <section class="note-feed">
-        <article v-for="note in filteredNotes" :key="note.id" class="note-card" :class="{ selected: activeNote?.id === note.id }" @click="setActiveNote(note)">
-          <div class="note-card-top">
-            <div>
-              <strong>{{ note.title }}</strong>
-              <small>{{ note.author_name || "未知作者" }} · {{ note.node_path || "AI 分类中" }} · {{ visibilityLabel(note.visibility) }} · {{ note.updated_at?.slice(0, 10) }}</small>
+        <aside class="graph-inspector">
+          <section class="compact-panel">
+            <div class="panel-kicker">
+              <Sparkles :size="15" />
+              <span>最近解析</span>
             </div>
-            <button v-if="canManageNote(note)" type="button" class="icon-button" title="编辑" @click.stop="editNote(note)">
-              <Pencil :size="14" />
-            </button>
+            <div v-if="lastClassification" class="analysis-card">
+              <small>{{ lastClassification.course_name }} / {{ lastClassification.node_title }}</small>
+              <strong>{{ lastClassification.summary }}</strong>
+              <div class="tag-row">
+                <span v-for="tag in lastClassification.tags" :key="tag">{{ tag }}</span>
+              </div>
+              <div v-if="lastImport" class="document-meta">
+                <small>{{ lastImport.file_name }}</small>
+                <span>{{ lastImport.parser }} · {{ lastImport.characters }} 字符</span>
+              </div>
+            </div>
+            <div v-else class="analysis-card muted-card">
+              <small>MoDora-inspired</small>
+              <strong>解析 -> 归类 -> 检索 -> 问答</strong>
+              <p>上传 PDF、Word 或 Markdown 后，后端会用远程 API 模型做轻量解析。</p>
+            </div>
+          </section>
+
+          <section class="compact-panel qa-panel">
+            <div class="panel-kicker">
+              <Bot :size="15" />
+              <span>笔记问答</span>
+            </div>
+            <form class="qa-form" @submit.prevent="askNotes">
+              <textarea v-model.trim="question" placeholder="问一个和笔记有关的问题" />
+              <button type="submit" class="primary-button">
+                <Send :size="14" />
+                提问
+              </button>
+            </form>
+            <div v-if="answer.answer" class="answer-card">
+              <small>{{ answer.source === "remote" ? "模型回答" : "本地 fallback" }}</small>
+              <p>{{ answer.answer }}</p>
+            </div>
+            <div class="context-list">
+              <article v-for="context in answer.contexts" :key="context.source_id">
+                <strong>{{ context.title }}</strong>
+                <small>{{ context.node_path || "未归档" }} · score {{ context.score }}</small>
+                <p>{{ context.snippet }}</p>
+              </article>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section v-else-if="activeView === 'personal'" class="personal-view">
+        <aside class="note-list-panel">
+          <div class="list-toolbar">
+            <div class="search-box">
+              <Search :size="15" />
+              <input v-model.trim="keyword" placeholder="搜索个人笔记" @input="scheduleFeedSearch" />
+            </div>
           </div>
-          <p class="summary-text">{{ note.summary || note.content_text }}</p>
-          <div class="tag-row">
-            <span v-for="tag in note.tags" :key="tag">{{ tag }}</span>
+          <div class="note-list">
+            <article
+              v-for="note in personalNotes"
+              :key="note.id"
+              class="note-row"
+              :class="{ selected: activeNote?.id === note.id }"
+              @click="setActiveNote(note)"
+            >
+              <div>
+                <strong>{{ note.title }}</strong>
+                <small>{{ note.node_path || "AI 分类中" }} · {{ visibilityLabel(note.visibility) }}</small>
+              </div>
+              <div class="row-actions">
+                <button type="button" class="icon-button" title="编辑" @click.stop="editNote(note)">
+                  <Pencil :size="14" />
+                </button>
+                <button type="button" class="icon-button danger-soft" title="删除" @click.stop="deleteNote(note)">
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </article>
+            <p v-if="!personalNotes.length" class="empty-text large-empty">还没有个人笔记。</p>
           </div>
-          <div class="action-row">
-            <button v-if="canManageNote(note) && note.visibility !== 'shared'" type="button" class="ghost-button" @click.stop="publishNote(note)">
-              <Share2 :size="14" />
-              共享
-            </button>
-            <button type="button" class="ghost-button" :class="{ selected: note.is_liked }" @click.stop="toggleLike(note)">
-              <ThumbsUp :size="14" />
-              {{ note.like_count || 0 }}
-            </button>
-            <button type="button" class="ghost-button" @click.stop="openDiscussion(note)">
-              <MessageSquare :size="14" />
-              {{ note.comment_count || 0 }}
-            </button>
-            <button v-if="canManageNote(note)" type="button" class="ghost-button" @click.stop="generateAi(note, 'summary')">
-              <Sparkles :size="14" />
-              摘要
-            </button>
-            <button v-if="canManageNote(note)" type="button" class="ghost-button" @click.stop="generateAi(note, 'tags')">
-              <Tags :size="14" />
-              标签
-            </button>
-            <button v-if="canManageNote(note)" type="button" class="ghost-button danger-soft" @click.stop="deleteNote(note)">
-              <Trash2 :size="14" />
-              删除
-            </button>
+        </aside>
+
+        <section class="editor-panel">
+          <form class="composer-form editor-form" @submit.prevent="saveNote">
+            <div class="editor-head">
+              <div>
+                <small>{{ draft.editingId ? "编辑笔记" : "新建笔记" }}</small>
+                <h2>{{ draft.title || "未命名笔记" }}</h2>
+              </div>
+              <select v-model="draft.visibility" aria-label="可见性">
+                <option value="private">个人</option>
+                <option value="shared">共享</option>
+              </select>
+            </div>
+            <input v-model.trim="draft.title" placeholder="标题，例如：Dijkstra 的适用条件" />
+            <input v-model.trim="draft.tags" placeholder="可选标签，用逗号分隔" />
+            <div class="markdown-workbench">
+              <textarea v-model="draft.content" placeholder="写课堂记录、摘录、错题思路、代码片段。AI 会判断课程和知识点。" />
+              <article class="markdown-preview" v-html="markdownPreview"></article>
+            </div>
+            <div class="composer-actions">
+              <button type="button" class="ghost-button" :disabled="importingDocument" @click="triggerDocumentImport">
+                <FileUp :size="15" />
+                {{ importingDocument ? "解析中" : "导入文件" }}
+              </button>
+              <button
+                v-if="draft.sourceNote && canManageNote(draft.sourceNote) && draft.sourceNote.visibility !== 'shared'"
+                type="button"
+                class="ghost-button"
+                @click="publishNote(draft.sourceNote)"
+              >
+                <Users :size="15" />
+                共享
+              </button>
+              <button
+                v-if="draft.sourceNote && canManageNote(draft.sourceNote)"
+                type="button"
+                class="ghost-button"
+                @click="generateAi(draft.sourceNote, 'summary')"
+              >
+                <Sparkles :size="15" />
+                摘要
+              </button>
+              <button
+                v-if="draft.sourceNote && canManageNote(draft.sourceNote)"
+                type="button"
+                class="ghost-button"
+                @click="generateAi(draft.sourceNote, 'tags')"
+              >
+                <Sparkles :size="15" />
+                标签
+              </button>
+              <button v-if="draft.editingId" type="button" class="ghost-button" @click="resetDraft">取消编辑</button>
+              <button type="submit" class="primary-button">
+                <UploadCloud :size="15" />
+                {{ draft.editingId ? "更新" : "保存并解析" }}
+              </button>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <section v-else-if="activeView === 'shared'" class="shared-view">
+        <div class="shared-search-row">
+          <div class="search-box shared-search">
+            <Search :size="16" />
+            <input v-model.trim="sharedKeyword" placeholder="搜索共享笔记" />
           </div>
-        </article>
-        <p v-if="user && !filteredNotes.length" class="empty-text large-empty">还没有符合条件的笔记。</p>
-        <p v-if="!user" class="empty-text large-empty">登录后即可添加和共享笔记。</p>
+        </div>
+        <section class="shared-grid">
+          <article v-for="note in sharedNotes" :key="note.id" class="shared-note" @click="setActiveNote(note)">
+            <div class="shared-cover">
+              <span>{{ coverInitial(note) }}</span>
+              <small>{{ note.node_path || "Shared" }}</small>
+            </div>
+            <div class="shared-body">
+              <strong>{{ note.title }}</strong>
+              <small>{{ note.author_name || "未知作者" }} · {{ note.updated_at?.slice(0, 10) }}</small>
+              <p>{{ note.summary || note.content_text }}</p>
+              <div class="shared-actions">
+                <button type="button" class="ghost-button" :class="{ selected: note.is_liked }" @click.stop="toggleLike(note)">
+                  <ThumbsUp :size="14" />
+                  {{ note.like_count || 0 }}
+                </button>
+                <button type="button" class="ghost-button" @click.stop="openDiscussion(note)">
+                  <MessageSquare :size="14" />
+                  {{ note.comment_count || 0 }}
+                </button>
+              </div>
+            </div>
+          </article>
+          <p v-if="!sharedNotes.length" class="empty-text large-empty">暂时没有符合条件的共享笔记。</p>
+        </section>
+      </section>
+
+      <section v-else-if="activeView === 'mistakes'" class="focus-view">
+        <section class="focus-panel">
+          <ClipboardList :size="24" />
+          <h2>错题整理</h2>
+          <p>当前 demo 先从个人笔记中整理错题线索。后续可把错题卡片接入同一套 AI 分类、共享和问答流程。</p>
+          <div class="mistake-candidates">
+            <article v-for="note in mistakeCandidates" :key="note.id" @click="setActiveNote(note)">
+              <strong>{{ note.title }}</strong>
+              <small>{{ note.node_path || "未归档" }}</small>
+              <p>{{ note.summary || note.content_text }}</p>
+            </article>
+          </div>
+          <p v-if="!mistakeCandidates.length" class="empty-text large-empty">还没有检测到错题相关笔记。</p>
+        </section>
+      </section>
+
+      <section v-else class="focus-view">
+        <section class="focus-panel daily-panel">
+          <CalendarDays :size="24" />
+          <small>{{ todayLabel }}</small>
+          <h2>{{ dailyQuestion.title }}</h2>
+          <p>{{ dailyQuestion.prompt }}</p>
+          <div class="daily-source">
+            <span>来源</span>
+            <strong>{{ dailyQuestion.source }}</strong>
+          </div>
+          <button type="button" class="primary-button" @click="question = dailyQuestion.prompt; activeView = 'network'">
+            <Bot :size="15" />
+            用笔记问答展开
+          </button>
+        </section>
       </section>
     </section>
 
-    <aside class="inspector">
-      <section class="quiet-panel analysis-panel">
-        <div class="panel-kicker">
-          <Sparkles :size="15" />
-          <span>解析</span>
-        </div>
-        <div v-if="lastClassification" class="analysis-card">
-          <small>上次归档</small>
-          <strong>{{ lastClassification.course_name }} / {{ lastClassification.node_title }}</strong>
-          <p>{{ lastClassification.summary }}</p>
-          <div class="tag-row">
-            <span v-for="tag in lastClassification.tags" :key="tag">{{ tag }}</span>
-          </div>
-          <div v-if="lastImport" class="document-meta">
-            <small>文件解析</small>
-            <strong>{{ lastImport.file_name }}</strong>
-            <span>{{ lastImport.parser }} · {{ lastImport.characters }} 字符</span>
-          </div>
-        </div>
-        <div v-else class="analysis-card muted-card">
-          <small>MoDora-inspired</small>
-          <strong>解析 -> 归类 -> 检索 -> 问答</strong>
-          <p>这里使用轻量文本摄取和 API 模型，不引入 OCR、本地模型或 GPU 依赖。</p>
-        </div>
-      </section>
-
-      <section class="quiet-panel qa-panel">
-        <div class="panel-kicker">
-          <Bot :size="15" />
-          <span>笔记问答</span>
-        </div>
-        <form class="qa-form" @submit.prevent="askNotes">
-          <textarea v-model.trim="question" placeholder="问一个和笔记有关的问题" />
-          <button type="submit" class="primary-button">
-            <Send :size="14" />
-            提问
-          </button>
-        </form>
-        <div v-if="answer.answer" class="answer-card">
-          <small>{{ answer.source === "remote" ? "模型回答" : "本地 fallback" }}</small>
-          <p>{{ answer.answer }}</p>
-        </div>
-        <div class="context-list">
-          <article v-for="context in answer.contexts" :key="context.source_id">
-            <strong>{{ context.title }}</strong>
-            <small>{{ context.node_path || "未归档" }} · score {{ context.score }}</small>
-            <p>{{ context.snippet }}</p>
-          </article>
-        </div>
-      </section>
-
-      <section v-if="activeNote" class="quiet-panel detail-panel">
-        <div class="panel-kicker">
-          <PanelRight :size="15" />
-          <span>当前笔记</span>
-        </div>
-        <strong>{{ activeNote.title }}</strong>
-        <small>{{ activeNote.node_path || "未归档" }}</small>
-        <p>{{ activeNote.content_text }}</p>
-      </section>
+    <aside v-if="activeNote && activeView !== 'personal'" class="floating-detail">
+      <div class="panel-kicker">
+        <PanelRight :size="15" />
+        <span>当前笔记</span>
+        <button type="button" class="icon-button" title="关闭" @click="activeNote = null">
+          <X :size="14" />
+        </button>
+      </div>
+      <strong>{{ activeNote.title }}</strong>
+      <small>{{ activeNote.node_path || "未归档" }}</small>
+      <p>{{ activeNote.content_text }}</p>
     </aside>
 
     <aside v-if="discussion.open" class="overlay" @click.self="closeDiscussion">
@@ -364,24 +472,27 @@
 <script setup lang="ts">
 import {
   Activity,
+  BookOpen,
   Bot,
+  CalendarDays,
   Check,
+  ClipboardList,
   FileUp,
-  FolderKanban,
+  LogOut,
   MessageSquare,
+  Network,
   PanelRight,
   Pencil,
+  Plus,
   RefreshCcw,
   Search,
   Send,
-  Share2,
   ShieldCheck,
   Sparkles,
-  Tags,
   ThumbsUp,
   Trash2,
   UploadCloud,
-  UserRound,
+  Users,
   X
 } from "@lucide/vue";
 import { computed, onMounted, reactive, ref } from "vue";
@@ -391,15 +502,31 @@ import type { AdminOverview, AiResult, AiStatus, AiTaskType, Comment, Course, No
 
 defineEmits<{ home: [] }>();
 
+type ActiveView = "network" | "personal" | "shared" | "mistakes" | "daily";
+type GraphNode = {
+  id: string;
+  kind: "hub" | "course" | "note";
+  label: string;
+  short: string;
+  meta: string;
+  x: number;
+  y: number;
+  courseId?: number | null;
+  noteId?: number;
+};
+
 const backendReady = ref(false);
 const user = ref<User | null>(null);
 const courses = ref<Course[]>([]);
 const notes = ref<Note[]>([]);
 const activeNote = ref<Note | null>(null);
+const activeView = ref<ActiveView>("network");
 const selectedCourseId = ref<number | null>(null);
+const selectedGraphNodeId = ref("hub");
 const aiStatus = ref<AiStatus | null>(null);
 const adminOverview = ref<AdminOverview | null>(null);
 const keyword = ref("");
+const sharedKeyword = ref("");
 const question = ref("");
 const toast = ref("");
 const documentInput = ref<HTMLInputElement | null>(null);
@@ -451,17 +578,144 @@ const confirmDialog = reactive<{
   action: null | (() => Promise<void>);
 }>({ open: false, title: "", message: "", action: null });
 
-const selectedCourseName = computed(() => {
-  if (selectedCourseId.value === null) return "全部 AI 分类";
-  return courses.value.find((course) => course.id === selectedCourseId.value)?.name || "AI 分类";
+const viewKicker = computed(() => {
+  const labels: Record<ActiveView, string> = {
+    network: "Knowledge network",
+    personal: "Private capture",
+    shared: "Community notes",
+    mistakes: "Review queue",
+    daily: "Daily prompt"
+  };
+  return labels[activeView.value];
 });
 
-const filteredNotes = computed(() => {
+const viewTitle = computed(() => {
+  const labels: Record<ActiveView, string> = {
+    network: "浮动知识点网络",
+    personal: "个人笔记",
+    shared: "共享笔记",
+    mistakes: "错题整理",
+    daily: "每日一题"
+  };
+  return labels[activeView.value];
+});
+
+const personalNotes = computed(() => {
   return notes.value.filter((note) => {
+    if (note.author_id !== user.value?.id) return false;
     if (selectedCourseId.value !== null && note.course_id !== selectedCourseId.value) return false;
     return true;
   });
 });
+
+const sharedNotes = computed(() => {
+  const q = sharedKeyword.value.trim().toLowerCase();
+  return notes.value.filter((note) => {
+    if (note.visibility !== "shared" || note.author_id === user.value?.id) return false;
+    if (!q) return true;
+    const haystack = `${note.title} ${note.summary || ""} ${note.content_text} ${(note.tags || []).join(" ")} ${note.node_path || ""}`.toLowerCase();
+    return haystack.includes(q);
+  });
+});
+
+const mistakeCandidates = computed(() => {
+  const words = ["错题", "错误", "wrong", "mistake", "反思", "订正"];
+  return personalNotes.value.filter((note) => {
+    const haystack = `${note.title} ${note.summary || ""} ${note.content_text} ${(note.tags || []).join(" ")}`.toLowerCase();
+    return words.some((word) => haystack.includes(word));
+  });
+});
+
+const networkNodes = computed<GraphNode[]>(() => {
+  const nodes: GraphNode[] = [
+    {
+      id: "hub",
+      kind: "hub",
+      label: "NoteWeave",
+      short: "NW",
+      meta: `${notes.value.length} 条笔记`,
+      x: 50,
+      y: 48
+    }
+  ];
+  const coursePositions = [
+    [24, 22],
+    [72, 20],
+    [82, 62],
+    [40, 78],
+    [18, 58],
+    [56, 16]
+  ];
+  courses.value.slice(0, 6).forEach((course, index) => {
+    const [x, y] = coursePositions[index] || [28 + index * 9, 24 + index * 8];
+    nodes.push({
+      id: `course-${course.id}`,
+      kind: "course",
+      label: course.name,
+      short: course.name.slice(0, 2).toUpperCase(),
+      meta: `${course.note_count || 0} 条`,
+      x,
+      y,
+      courseId: course.id
+    });
+  });
+  const notePositions = [
+    [18, 36],
+    [34, 15],
+    [66, 34],
+    [88, 44],
+    [68, 78],
+    [28, 72],
+    [50, 86],
+    [10, 70]
+  ];
+  notes.value.slice(0, 8).forEach((note, index) => {
+    const [x, y] = notePositions[index] || [20 + index * 8, 70 - index * 4];
+    nodes.push({
+      id: `note-${note.id}`,
+      kind: "note",
+      label: note.title,
+      short: coverInitial(note),
+      meta: note.node_path || visibilityLabel(note.visibility),
+      x,
+      y,
+      courseId: note.course_id,
+      noteId: note.id
+    });
+  });
+  return nodes;
+});
+
+const networkLinks = computed(() => {
+  const nodes = networkNodes.value;
+  const hub = nodes[0];
+  return nodes.slice(1).map((node) => {
+    const parent = node.kind === "note" ? nodes.find((candidate) => candidate.id === `course-${node.courseId}`) || hub : hub;
+    return { id: `${parent.id}-${node.id}`, from: parent, to: node };
+  });
+});
+
+const todayLabel = computed(() => {
+  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date());
+});
+
+const dailyQuestion = computed(() => {
+  const source = activeNote.value || personalNotes.value[0] || notes.value[0];
+  if (!source) {
+    return {
+      title: "今天先建立第一条知识线索",
+      prompt: "选择一个最近学到的概念，写下定义、例子和一个容易混淆的点。",
+      source: "尚无笔记"
+    };
+  }
+  return {
+    title: `复盘：${source.title}`,
+    prompt: `请基于「${source.title}」解释它的核心概念，并补充一个能够检验理解程度的问题。`,
+    source: source.node_path || source.title
+  };
+});
+
+const markdownPreview = computed(() => renderMarkdown(draft.content));
 
 function notify(message: string): void {
   toast.value = message;
@@ -483,6 +737,7 @@ async function login(): Promise<void> {
     const result = await api.login({ username: auth.username, password: auth.password });
     setToken(result.token);
     user.value = result.user;
+    activeView.value = "network";
     await loadWorkspace();
   });
 }
@@ -496,6 +751,7 @@ async function register(): Promise<void> {
     });
     setToken(result.token);
     user.value = result.user;
+    activeView.value = "network";
     await loadWorkspace();
   });
 }
@@ -509,6 +765,7 @@ async function logout(): Promise<void> {
   activeNote.value = null;
   selectedCourseId.value = null;
   adminOverview.value = null;
+  activeView.value = "network";
 }
 
 async function loadWorkspace(): Promise<void> {
@@ -528,7 +785,7 @@ async function loadAdminOverview(): Promise<void> {
 
 async function loadCoursesAndNotes(): Promise<void> {
   if (!user.value) return;
-  const [courseList, noteFeed] = await Promise.all([api.listCourses(), api.listNoteFeed(100, keyword.value)]);
+  const [courseList, noteFeed] = await Promise.all([api.listCourses(), api.listNoteFeed(120, keyword.value)]);
   courses.value = courseList;
   notes.value = noteFeed;
   if (activeNote.value) {
@@ -545,8 +802,21 @@ function scheduleFeedSearch(): void {
   }, 260);
 }
 
-function selectCourse(courseId: number | null): void {
-  selectedCourseId.value = courseId;
+function showNetwork(): void {
+  activeView.value = "network";
+}
+
+function startNewNote(): void {
+  resetDraft();
+  activeView.value = "personal";
+}
+
+function selectGraphNode(node: GraphNode): void {
+  selectedGraphNodeId.value = node.id;
+  selectedCourseId.value = node.courseId ?? null;
+  if (node.noteId) {
+    activeNote.value = notes.value.find((note) => note.id === node.noteId) || null;
+  }
 }
 
 async function saveNote(): Promise<void> {
@@ -576,6 +846,7 @@ async function saveNote(): Promise<void> {
       lastImport.value = null;
       selectedCourseId.value = result.course.id;
       activeNote.value = result.note;
+      selectedGraphNodeId.value = `note-${result.note.id}`;
       notify("笔记已保存并完成 AI 归类");
     }
     resetDraft();
@@ -615,7 +886,9 @@ async function importDocument(event: Event): Promise<void> {
         characters: result.document.characters
       };
       selectedCourseId.value = result.course.id;
+      selectedGraphNodeId.value = `note-${result.note.id}`;
       activeNote.value = result.note;
+      activeView.value = "network";
       resetDraft();
       await loadCoursesAndNotes();
       notify("文件已解析并导入为笔记");
@@ -662,6 +935,7 @@ function editNote(note: Note): void {
   draft.tags = (note.tags || []).join(", ");
   draft.visibility = note.visibility;
   activeNote.value = note;
+  activeView.value = "personal";
 }
 
 function setActiveNote(note: Note): void {
@@ -730,9 +1004,7 @@ async function acceptAiReview(): Promise<void> {
     if (!aiReview.resultId || !aiReview.taskType) return;
     await api.acceptAiResult(
       aiReview.resultId,
-      aiReview.taskType === "summary"
-        ? { summary: aiReview.summary }
-        : { tags: splitTags(aiReview.tagsText) }
+      aiReview.taskType === "summary" ? { summary: aiReview.summary } : { tags: splitTags(aiReview.tagsText) }
     );
     closeAiReview();
     await loadCoursesAndNotes();
@@ -802,12 +1074,77 @@ function visibilityLabel(value: Note["visibility"]): string {
   return value === "shared" ? "共享" : "个人";
 }
 
+function coverInitial(note: Note): string {
+  const source = note.tags?.[0] || note.title || "N";
+  return source.slice(0, 2).toUpperCase();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInline(value: string): string {
+  return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+}
+
+function renderMarkdown(value: string): string {
+  if (!value.trim()) return '<p class="preview-empty">Markdown 预览</p>';
+  const lines = value.split(/\r?\n/);
+  const html: string[] = [];
+  let listOpen = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (listOpen) {
+        html.push("</ul>");
+        listOpen = false;
+      }
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      if (listOpen) {
+        html.push("</ul>");
+        listOpen = false;
+      }
+      html.push(`<h${heading[1].length}>${renderInline(heading[2])}</h${heading[1].length}>`);
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      if (!listOpen) {
+        html.push("<ul>");
+        listOpen = true;
+      }
+      html.push(`<li>${renderInline(bullet[1])}</li>`);
+      continue;
+    }
+    if (listOpen) {
+      html.push("</ul>");
+      listOpen = false;
+    }
+    html.push(`<p>${renderInline(trimmed)}</p>`);
+  }
+  if (listOpen) html.push("</ul>");
+  return html.join("");
+}
+
 onMounted(async () => {
   await guarded(async () => {
     backendReady.value = (await api.health()).status === "ok";
     const me = await api.me().catch(() => null);
     if (me) {
       user.value = me;
+      activeView.value = "network";
       await loadWorkspace();
     }
   });

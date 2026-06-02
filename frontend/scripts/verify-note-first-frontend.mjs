@@ -55,8 +55,13 @@ const workspace = readFileSync(join(componentRoot, "WorkspacePage.vue"), "utf8")
 if (!workspace.includes('<main v-if="!user" class="auth-shell">')) {
   violations.push("WorkspacePage.vue: missing unauthenticated auth-shell gate");
 }
-if (!workspace.includes('<main v-else class="app-shell">')) {
+if (!workspace.includes('<main v-else class="app-shell knowledge-app">')) {
   violations.push("WorkspacePage.vue: app-shell must only render behind authenticated v-else gate");
+}
+for (const label of ["个人笔记", "共享笔记", "错题整理", "每日一题", "浮动知识点网络"]) {
+  if (!workspace.includes(label)) {
+    violations.push(`WorkspacePage.vue: redesigned workspace is missing "${label}"`);
+  }
 }
 for (const extension of [".pdf", ".docx", ".md", ".markdown"]) {
   if (!workspace.includes(extension)) {
@@ -71,6 +76,9 @@ if (!workspace.includes('class="qa-form"') || !workspace.includes("api.askNotes"
 }
 if (!workspace.includes('class="context-list"') || !workspace.includes("answer.contexts")) {
   violations.push("WorkspacePage.vue: note QA must render retrieved contexts");
+}
+if (!workspace.includes('class="markdown-preview"') || !workspace.includes("renderMarkdown")) {
+  violations.push("WorkspacePage.vue: personal note editor must include realtime markdown preview");
 }
 
 if (violations.length) {
