@@ -22,16 +22,6 @@ export type Course = {
   mistake_count?: number;
 };
 
-export type CourseRole = "student" | "maintainer" | "teacher";
-
-export type CourseMember = {
-  id: number;
-  username: string;
-  display_name: string;
-  role: CourseRole;
-  joined_at: string;
-};
-
 export type AuditLog = {
   id: number;
   course_id: number;

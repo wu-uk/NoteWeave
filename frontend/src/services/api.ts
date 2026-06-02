@@ -6,8 +6,6 @@ import type {
   Attachment,
   Comment,
   Course,
-  CourseMember,
-  CourseRole,
   AuditLog,
   KnowledgeNode,
   Mistake,
@@ -128,44 +126,6 @@ export const api = {
 
   listCourses() {
     return request<Course[]>("/api/courses");
-  },
-
-  createCourse(payload: { name: string; semester?: string; description?: string; tags?: string[] }) {
-    return request<Course>("/api/courses", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  updateCourse(courseId: number, payload: { name?: string; semester?: string; description?: string; tags?: string[] }) {
-    return request<Course>(`/api/courses/${courseId}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  joinCourse(invite_code: string) {
-    return request<Course>("/api/courses/join", {
-      method: "POST",
-      body: JSON.stringify({ invite_code })
-    });
-  },
-
-  listMembers(courseId: number) {
-    return request<CourseMember[]>(`/api/courses/${courseId}/members`);
-  },
-
-  updateMemberRole(courseId: number, memberId: number, role: CourseRole) {
-    return request<{ status: string }>(`/api/courses/${courseId}/members/${memberId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ role })
-    });
-  },
-
-  removeMember(courseId: number, memberId: number) {
-    return request<{ status: string }>(`/api/courses/${courseId}/members/${memberId}`, {
-      method: "DELETE"
-    });
   },
 
   listAuditLogs(courseId: number, limit = 50) {

@@ -8,7 +8,8 @@
     "build": "vue-tsc -b && vite build",
     "build:noteweave": "vue-tsc -b && VITE_BASE_PATH=/noteweave/ vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "typecheck": "vue-tsc -b"
+    "typecheck": "vue-tsc -b",
+    "verify:note-first": "node scripts/verify-note-first-frontend.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.17.0",
