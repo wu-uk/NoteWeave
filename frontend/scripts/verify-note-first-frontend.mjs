@@ -58,6 +58,20 @@ if (!workspace.includes('<main v-if="!user" class="auth-shell">')) {
 if (!workspace.includes('<main v-else class="app-shell">')) {
   violations.push("WorkspacePage.vue: app-shell must only render behind authenticated v-else gate");
 }
+for (const extension of [".pdf", ".docx", ".md", ".markdown"]) {
+  if (!workspace.includes(extension)) {
+    violations.push(`WorkspacePage.vue: document import accept list is missing "${extension}"`);
+  }
+}
+if (!workspace.includes("api.importNoteDocument")) {
+  violations.push("WorkspacePage.vue: document import must call api.importNoteDocument");
+}
+if (!workspace.includes('class="qa-form"') || !workspace.includes("api.askNotes")) {
+  violations.push("WorkspacePage.vue: note QA form must call api.askNotes");
+}
+if (!workspace.includes('class="context-list"') || !workspace.includes("answer.contexts")) {
+  violations.push("WorkspacePage.vue: note QA must render retrieved contexts");
+}
 
 if (violations.length) {
   console.error(violations.join("\n"));
