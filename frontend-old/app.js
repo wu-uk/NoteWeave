@@ -20,6 +20,16 @@ const state = {
   auditLogs: [],
   aiStatus: null,
   reviewItems: [],
+  discussion: {
+    open: false,
+    targetType: "",
+    targetId: null,
+    targetTitle: "",
+    items: [],
+    offset: 0,
+    hasMore: false,
+    loading: false
+  },
   paging: {
     notesHasMore: false,
     sharedNotesHasMore: false,
@@ -29,53 +39,72 @@ const state = {
   activeView: "overview"
 };
 
+let workspaceBooted = false;
+
 const $ = (id) => document.getElementById(id);
 
-const refs = {
-  apiBaseLabel: $("api-base-label"),
-  authForm: $("auth-form"),
-  userBar: $("user-bar"),
-  currentUserName: $("current-user-name"),
-  currentUserRole: $("current-user-role"),
-  loginButton: $("login-button"),
-  registerButton: $("register-button"),
-  editProfileButton: $("edit-profile-button"),
-  changePasswordButton: $("change-password-button"),
-  logoutButton: $("logout-button"),
-  courseList: $("course-list"),
-  courseTitle: $("course-title"),
-  courseRole: $("course-role"),
-  createCourseButton: $("create-course-button"),
-  joinCourseButton: $("join-course-button"),
-  courseSearchButton: $("course-search-button"),
-  courseSearchResults: $("course-search-results"),
-  tabs: $("tabs"),
-  knowledgeTree: $("knowledge-tree"),
-  treeMeta: $("tree-meta"),
-  selectedNodePath: $("selected-node-path"),
-  nodeSummary: $("node-summary"),
-  nodeForm: $("node-form"),
-  noteForm: $("note-form"),
-  noteList: $("note-list"),
-  noteCount: $("note-count"),
-  mistakeForm: $("mistake-form"),
-  mistakeList: $("mistake-list"),
-  mistakeCount: $("mistake-count"),
-  reviewForm: $("review-form"),
-  reviewList: $("review-list"),
-  searchForm: $("search-form"),
-  searchResults: $("search-results"),
-  sharedNoteList: $("shared-note-list"),
-  suggestionForm: $("suggestion-form"),
-  suggestionList: $("suggestion-list"),
-  courseSettingsForm: $("course-settings-form"),
-  memberList: $("member-list"),
-  aiStatusPanel: $("ai-status-panel"),
-  auditLogList: $("audit-log-list"),
-  toast: $("toast")
+const refs = {};
+const refIds = {
+  apiBaseLabel: "api-base-label",
+  authForm: "auth-form",
+  userBar: "user-bar",
+  currentUserName: "current-user-name",
+  currentUserRole: "current-user-role",
+  loginButton: "login-button",
+  registerButton: "register-button",
+  editProfileButton: "edit-profile-button",
+  changePasswordButton: "change-password-button",
+  logoutButton: "logout-button",
+  courseList: "course-list",
+  courseTitle: "course-title",
+  courseRole: "course-role",
+  createCourseButton: "create-course-button",
+  joinCourseButton: "join-course-button",
+  courseSearchButton: "course-search-button",
+  courseSearchResults: "course-search-results",
+  tabs: "tabs",
+  knowledgeTree: "knowledge-tree",
+  treeMeta: "tree-meta",
+  selectedNodePath: "selected-node-path",
+  nodeSummary: "node-summary",
+  nodeForm: "node-form",
+  noteForm: "note-form",
+  noteList: "note-list",
+  noteCount: "note-count",
+  mistakeForm: "mistake-form",
+  mistakeList: "mistake-list",
+  mistakeCount: "mistake-count",
+  reviewForm: "review-form",
+  reviewList: "review-list",
+  searchForm: "search-form",
+  searchResults: "search-results",
+  sharedNoteList: "shared-note-list",
+  suggestionForm: "suggestion-form",
+  suggestionList: "suggestion-list",
+  courseSettingsForm: "course-settings-form",
+  memberList: "member-list",
+  leaveCourseButton: "leave-course-button",
+  aiStatusPanel: "ai-status-panel",
+  auditLogList: "audit-log-list",
+  toast: "toast",
+  discussionDrawer: "discussion-drawer",
+  discussionTitle: "discussion-title",
+  discussionSubtitle: "discussion-subtitle",
+  discussionList: "discussion-list",
+  discussionLoadMore: "discussion-load-more",
+  discussionClose: "discussion-close",
+  discussionRefresh: "discussion-refresh",
+  discussionForm: "discussion-form",
+  discussionContent: "discussion-content"
 };
 
-refs.apiBaseLabel.textContent = API_BASE;
+Object.keys(refIds).forEach((key) => {
+  Object.defineProperty(refs, key, {
+    get() {
+      return $(refIds[key]);
+    }
+  });
+});
 
 function authHeaders() {
   return state.token ? { Authorization: `Bearer ${state.token}` } : {};
@@ -161,6 +190,10 @@ function currentNodeId() {
   return state.selectedNode ? state.selectedNode.id : null;
 }
 
+function canManageMembers() {
+  return ["maintainer", "teacher"].includes(state.currentCourse && state.currentCourse.role ? state.currentCourse.role : "");
+}
+
 function resetPaging() {
   state.paging = {
     notesHasMore: false,
@@ -171,6 +204,14 @@ function resetPaging() {
 }
 
 async function boot() {
+  if (workspaceBooted) {
+    render();
+    return;
+  }
+
+  if (refs.apiBaseLabel) {
+    refs.apiBaseLabel.textContent = API_BASE;
+  }
   bindEvents();
   renderAuth();
   if (state.token) {
@@ -185,6 +226,7 @@ async function boot() {
     }
   }
   render();
+  workspaceBooted = true;
 }
 
 function bindEvents() {
@@ -226,6 +268,21 @@ function bindEvents() {
   refs.searchForm.addEventListener("submit", search);
   refs.suggestionForm.addEventListener("submit", createSuggestion);
   refs.courseSettingsForm.addEventListener("submit", updateCourseSettings);
+  refs.leaveCourseButton.addEventListener("click", leaveCourse);
+  refs.discussionClose.addEventListener("click", closeDiscussion);
+  refs.discussionRefresh.addEventListener("click", () =>
+    loadDiscussionComments({ targetType: state.discussion.targetType, targetId: state.discussion.targetId, append: false })
+  );
+  refs.discussionLoadMore.addEventListener("click", () =>
+    loadDiscussionComments({ targetType: state.discussion.targetType, targetId: state.discussion.targetId, append: true })
+  );
+  refs.discussionForm.addEventListener("submit", submitDiscussion);
+
+  refs.discussionDrawer.addEventListener("click", (event) => {
+    if (event.target === refs.discussionDrawer) {
+      closeDiscussion();
+    }
+  });
 }
 
 async function submitAuth(mode) {
@@ -264,6 +321,7 @@ async function logout() {
     /* local logout still applies */
   }
   setToken("");
+  closeDiscussion();
   state.user = null;
   state.courses = [];
   state.currentCourse = null;
@@ -483,6 +541,52 @@ async function loadMembers() {
   renderSettings();
 }
 
+async function removeCourseMember(memberId, displayName) {
+  if (!state.currentCourse || !canManageMembers()) {
+    showToast("当前角色无权移除成员");
+    return;
+  }
+  if (!window.confirm(`确认移除 ${displayName}？`)) return;
+  try {
+    await api(`/api/courses/${state.currentCourse.id}/members/${memberId}`, { method: "DELETE" });
+    await Promise.all([loadCourses(), loadMembers(), loadAuditLogs()]);
+    showToast("成员已移除");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function leaveCourse() {
+  if (!requireCourse()) return;
+  if (!window.confirm("退出课程后将不再显示该课程内容，确认继续？")) return;
+  try {
+    await api(`/api/courses/${state.currentCourse.id}/leave`, { method: "POST" });
+    const currentCourseId = state.currentCourse.id;
+    await loadCourses();
+    if (state.courses.some((course) => course.id === currentCourseId)) {
+      state.currentCourse = state.courses.find((course) => course.id === currentCourseId);
+    } else {
+      state.currentCourse = state.courses.length > 0 ? state.courses[0] : null;
+      if (!state.currentCourse) {
+        state.tree = null;
+        state.members = [];
+        state.auditLogs = [];
+        state.notes = [];
+        state.sharedNotes = [];
+        state.mistakes = [];
+        state.reviewItems = [];
+        state.nodeDetail = null;
+      } else {
+        await Promise.all([loadTree(), loadNotes(), loadSharedNotes(), loadMistakes(), loadSuggestions(), loadMembers(), loadAuditLogs(), loadReview()]);
+      }
+    }
+    render();
+    showToast("已退出课程");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function loadAuditLogs() {
   if (!state.currentCourse) return;
   try {
@@ -522,6 +626,10 @@ async function updateCourseSettings(event) {
 
 async function updateMemberRole(memberId, role) {
   if (!requireCourse()) return;
+  if (!canManageMembers()) {
+    showToast("当前角色无权调整成员");
+    return;
+  }
   try {
     await api(`/api/courses/${state.currentCourse.id}/members/${memberId}`, {
       method: "PATCH",
@@ -761,34 +869,75 @@ async function toggleFavoriteContent(targetType, targetId, favoriteReactionId) {
   }
 }
 
-async function commentNote(noteId) {
-  const content = window.prompt("评论内容");
-  if (!content) return;
-  try {
-    await api("/api/comments", {
-      method: "POST",
-      body: JSON.stringify({ target_type: "note", target_id: noteId, content })
-    });
-    await Promise.all([loadNotes(), loadSharedNotes()]);
-    showToast("评论已发布");
-  } catch (error) {
-    showToast(error.message);
-  }
+function openDiscussion(targetType, targetId, title) {
+  state.discussion.open = true;
+  state.discussion.targetType = targetType;
+  state.discussion.targetId = targetId;
+  state.discussion.targetTitle = title || `${targetType} ${targetId}`;
+  state.discussion.offset = 0;
+  state.discussion.items = [];
+  state.discussion.hasMore = false;
+  refs.discussionDrawer.classList.remove("hidden");
+  refs.discussionDrawer.setAttribute("aria-hidden", "false");
+  refs.discussionTitle.textContent = "讨论";
+  refs.discussionSubtitle.textContent = `${state.discussion.targetTitle} · ${targetType} #${targetId}`;
+  renderDiscussion();
+  return loadDiscussionComments({ targetType, targetId, append: false });
 }
 
-async function viewComments(targetType, targetId) {
+function closeDiscussion() {
+  state.discussion.open = false;
+  refs.discussionDrawer.classList.add("hidden");
+  refs.discussionDrawer.setAttribute("aria-hidden", "true");
+  refs.discussionContent.value = "";
+}
+
+async function loadDiscussionComments({ targetType, targetId, append }) {
+  if (!targetType || !targetId) return;
+  if (state.discussion.loading) return;
+  state.discussion.loading = true;
   try {
+    const offset = append ? state.discussion.offset : 0;
     const params = new URLSearchParams({
       target_type: targetType,
       target_id: String(targetId),
-      limit: "20",
-      offset: "0"
+      limit: String(PAGE_SIZE),
+      offset: String(offset)
     });
-    const comments = await api(`/api/comments?${params.toString()}`);
-    const text = comments.length
-      ? comments.map((comment) => `#${comment.id} 用户 ${comment.author_id}: ${comment.content}`).join("\n")
-      : "暂无评论";
-    window.alert(text);
+    const rows = await api(`/api/comments?${params.toString()}`);
+    state.discussion.items = append ? [...state.discussion.items, ...rows] : rows;
+    state.discussion.offset = state.discussion.items.length;
+    state.discussion.hasMore = rows.length === PAGE_SIZE;
+    renderDiscussion();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.discussion.loading = false;
+  }
+}
+
+async function submitDiscussion(event) {
+  event.preventDefault();
+  const targetType = state.discussion.targetType;
+  const targetId = state.discussion.targetId;
+  const content = refs.discussionContent.value.trim();
+  if (!targetType || !targetId || !content) {
+    if (!content) showToast("请输入评论内容");
+    return;
+  }
+  try {
+    await api("/api/comments", {
+      method: "POST",
+      body: JSON.stringify({ target_type: targetType, target_id: Number(targetId), content })
+    });
+    refs.discussionContent.value = "";
+    await Promise.all([loadNotes(), loadSharedNotes(), loadMistakes()]);
+    await loadDiscussionComments({
+      targetType,
+      targetId,
+      append: false
+    });
+    showToast("评论已发布");
   } catch (error) {
     showToast(error.message);
   }
@@ -809,6 +958,39 @@ async function viewNoteVersions(noteId) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function renderDiscussion() {
+  if (!state.discussion.open) {
+    return;
+  }
+  if (state.discussion.loading) {
+    refs.discussionList.innerHTML = `<div class="meta">正在加载评论...</div>`;
+    refs.discussionLoadMore.classList.add("hidden");
+    return;
+  }
+  refs.discussionLoadMore.classList.toggle("hidden", !state.discussion.hasMore);
+  if (state.discussion.items.length === 0) {
+    refs.discussionList.innerHTML = `<div class="meta">暂无评论，开始第一条讨论吧</div>`;
+    return;
+  }
+  const sorted = [...state.discussion.items].sort((a, b) => {
+    if (!a.created_at || !b.created_at) return 0;
+    return b.created_at.localeCompare(a.created_at);
+  });
+  refs.discussionList.innerHTML = sorted
+    .map(
+      (comment) => `
+        <article class="discussion-item">
+          <div class="discussion-meta">
+            <span> #${comment.id} · 用户 ${comment.author_id}</span>
+            ${comment.created_at ? `<time>${comment.created_at.slice(0, 19).replace("T", " ")}</time>` : ""}
+          </div>
+          <div class="discussion-body-text">${escapeHtml(comment.content)}</div>
+        </article>
+      `
+    )
+    .join("");
 }
 
 async function runAi(noteId, type) {
@@ -1015,6 +1197,7 @@ function render() {
   renderReview();
   renderSuggestions();
   renderSettings();
+  renderDiscussion();
 }
 
 function renderAuth() {
@@ -1044,7 +1227,12 @@ function renderCourses() {
         <div class="course-row ${state.currentCourse && state.currentCourse.id === course.id ? "active" : ""}" data-course-id="${course.id}">
           <strong>${escapeHtml(course.name)}</strong>
           <span>${escapeHtml(course.semester || "未设置学期")} · ${escapeHtml(course.role || "")}</span>
-          <span>邀请码 ${escapeHtml(course.invite_code)}</span>
+          <span>
+            笔记 ${course.stats?.note_count || 0} · 错题 ${course.stats?.mistake_count || 0}
+            · 知识点 ${course.stats?.knowledge_node_count || 0}
+            · 最近更新 ${escapeHtml((course.updated_at || "").slice(0, 10) || "未知")}
+          </span>
+          <span>邀请码 ${escapeHtml(course.invite_code || "无")}</span>
         </div>
       `
     )
@@ -1085,7 +1273,9 @@ function renderCourseHeader() {
     return;
   }
   refs.courseTitle.textContent = state.currentCourse.name;
-  refs.courseRole.textContent = `${state.currentCourse.semester || "未设置学期"} · ${state.currentCourse.role || "成员"}`;
+  const courseStats = state.currentCourse.stats || {};
+  const updatedAt = state.currentCourse.updated_at ? state.currentCourse.updated_at.slice(0, 10) : "未知";
+  refs.courseRole.textContent = `${state.currentCourse.semester || "未设置学期"} · ${state.currentCourse.role || "成员"} · 更新 ${updatedAt} · 笔记 ${courseStats.note_count || 0}`;
 }
 
 function renderTabs() {
@@ -1308,7 +1498,7 @@ function renderNoteItem(note) {
   const favoriteAction = note.favorite_reaction_id || "";
   const likeAction = note.like_reaction_id || "";
   return `
-    <article class="item" data-note-id="${note.id}">
+    <article class="item" data-note-id="${note.id}" data-note-title="${escapeHtml(note.title || `笔记 ${note.id}`)}">
       <strong class="item-title">#${note.id} ${escapeHtml(note.title)}</strong>
       <div class="item-meta">${escapeHtml(note.node_path || "未归档")} · ${escapeHtml(note.visibility)} · ${escapeHtml(note.status)} · ${note.like_count} 赞 · ${note.comment_count} 评 · ${note.is_liked ? "已点赞" : "未点赞"} · ${note.is_favorite ? "已收藏" : "未收藏"}</div>
       ${formatTags(note.tags, "green")}
@@ -1318,8 +1508,7 @@ function renderNoteItem(note) {
         <button class="secondary" data-action="publish">发布</button>
         <button class="secondary" data-action="like" data-like-reaction-id="${likeAction}">${note.is_liked ? "取消点赞" : "点赞"}</button>
         <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${note.is_favorite ? "取消收藏" : "收藏"}</button>
-        <button class="secondary" data-action="comment">评论</button>
-        <button class="secondary" data-action="view-comments">查看评论</button>
+        <button class="secondary" data-action="discuss">讨论</button>
         <button class="secondary" data-action="versions">版本</button>
         <button class="secondary" data-action="summary">AI 摘要</button>
         <button class="secondary" data-action="tags">AI 标签</button>
@@ -1333,14 +1522,14 @@ function renderNoteItem(note) {
 function bindNoteActions(container) {
   container.querySelectorAll("[data-note-id]").forEach((item) => {
     const noteId = Number(item.dataset.noteId);
+    const noteTitle = item.dataset.noteTitle || `笔记 ${noteId}`;
     item.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.action;
         if (action === "publish") publishNote(noteId);
         if (action === "like") toggleLikeNote(noteId, Number(button.dataset.likeReactionId) || null);
         if (action === "favorite") toggleFavoriteContent("note", noteId, Number(button.dataset.favoriteReactionId) || null);
-        if (action === "comment") commentNote(noteId);
-        if (action === "view-comments") viewComments("note", noteId);
+        if (action === "discuss") openDiscussion("note", noteId, noteTitle);
         if (action === "versions") viewNoteVersions(noteId);
         if (action === "summary") runAi(noteId, "summary");
         if (action === "tags") runAi(noteId, "tags");
@@ -1410,6 +1599,7 @@ function renderMistakes() {
             <button class="secondary" data-status="retry">需再练</button>
             <button class="secondary" data-status="mastered">已掌握</button>
             <button class="secondary" data-action="favorite" data-favorite-reaction-id="${favoriteAction}">${mistake.is_favorite ? "取消收藏" : "收藏"}</button>
+            <button class="secondary" data-action="discuss">讨论</button>
             <button class="text danger-text" data-action="delete">删除</button>
           </div>
         </article>
@@ -1427,6 +1617,9 @@ function renderMistakes() {
     });
     item.querySelectorAll("[data-action='favorite']").forEach((button) => {
       button.addEventListener("click", () => toggleFavoriteContent("mistake", id, Number(button.dataset.favoriteReactionId) || null));
+    });
+    item.querySelectorAll("[data-action='discuss']").forEach((button) => {
+      button.addEventListener("click", () => openDiscussion("mistake", id, `错题 #${id}`));
     });
   });
 }
@@ -1579,11 +1772,13 @@ function renderSuggestions() {
 function renderSettings() {
   if (!state.currentCourse) {
     refs.courseSettingsForm.reset();
+    refs.leaveCourseButton.disabled = true;
     refs.memberList.innerHTML = `<div class="meta">选择课程后显示设置</div>`;
     refs.aiStatusPanel.innerHTML = `<div class="meta">登录后显示 AI 配置状态</div>`;
     refs.auditLogList.innerHTML = `<div class="meta">选择课程后显示审计日志</div>`;
     return;
   }
+  refs.leaveCourseButton.disabled = !state.currentCourse;
   $("settings-course-name").value = state.currentCourse.name || "";
   $("settings-course-semester").value = state.currentCourse.semester || "";
   $("settings-course-description").value = state.currentCourse.description || "";
@@ -1605,6 +1800,11 @@ function renderSettings() {
               <option value="teacher" ${member.role === "teacher" ? "selected" : ""}>教师/助教</option>
             </select>
             <button class="secondary" data-action="save-role" type="button">保存角色</button>
+            ${
+              canManageMembers() && member.id !== state.user.id
+                ? `<button class="text danger-text" data-action="remove-member" type="button">移除</button>`
+                : ""
+            }
           </div>
         </article>
       `
@@ -1612,9 +1812,25 @@ function renderSettings() {
       .join("");
     refs.memberList.querySelectorAll("[data-member-id]").forEach((item) => {
       const memberId = Number(item.dataset.memberId);
+      const memberRow = item.querySelector(".item-title");
+      const memberName = memberRow ? memberRow.textContent.trim() : `成员 ${memberId}`;
+      const select = item.querySelector("[data-role-select]");
+      const roleButton = item.querySelector("[data-action='save-role']");
       item.querySelector("[data-action='save-role']").addEventListener("click", () => {
-        updateMemberRole(memberId, item.querySelector("[data-role-select]").value);
+        if (!canManageMembers()) {
+          showToast("当前角色无权调整成员");
+          return;
+        }
+        updateMemberRole(memberId, select.value);
       });
+      const removeButton = item.querySelector("[data-action='remove-member']");
+      if (removeButton) {
+        removeButton.addEventListener("click", () => removeCourseMember(memberId, memberName));
+      }
+      if (!canManageMembers()) {
+        select.disabled = true;
+        roleButton.disabled = true;
+      }
     });
   }
 
@@ -1649,5 +1865,6 @@ function renderAiStatusPanel() {
     </article>
   `;
 }
-
-boot();
+if (typeof window !== "undefined") {
+  window.NoteWeaveBoot = boot;
+}

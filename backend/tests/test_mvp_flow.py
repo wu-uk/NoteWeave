@@ -751,3 +751,283 @@ async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
         assert member_audit["target_type"] == "user"
         assert member_audit["target_id"] == bob_id
         assert member_audit["metadata"]["role"] == "teacher"
+
+
+@pytest.mark.anyio
+async def test_course_member_lifecycle(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        alice_res = await client.post(
+            "/api/auth/register",
+            json={"username": "alice", "password": "password123", "display_name": "Alice"},
+        )
+        assert alice_res.status_code == 200
+        alice = auth_headers(alice_res.json()["token"])
+        alice_id = alice_res.json()["user"]["id"]
+
+        course_res = await client.post(
+            "/api/courses",
+            headers=alice,
+            json={
+                "name": "Algorithms",
+                "description": "Lifecycle test",
+                "semester": "2026",
+                "tags": ["cs"],
+            },
+        )
+        assert course_res.status_code == 200
+        course = course_res.json()
+
+        bob_res = await client.post(
+            "/api/auth/register",
+            json={"username": "bob", "password": "password123", "display_name": "Bob"},
+        )
+        assert bob_res.status_code == 200
+        bob_id = bob_res.json()["user"]["id"]
+        bob = auth_headers(bob_res.json()["token"])
+
+        carol_res = await client.post(
+            "/api/auth/register",
+            json={"username": "carol", "password": "password123", "display_name": "Carol"},
+        )
+        assert carol_res.status_code == 200
+        carol_id = carol_res.json()["user"]["id"]
+        carol = auth_headers(carol_res.json()["token"])
+
+        dave_res = await client.post(
+            "/api/auth/register",
+            json={"username": "dave", "password": "password123", "display_name": "Dave"},
+        )
+        assert dave_res.status_code == 200
+        dave_id = dave_res.json()["user"]["id"]
+        dave = auth_headers(dave_res.json()["token"])
+
+        for token in (bob, carol, dave):
+            res = await client.post(f"/api/courses/{course['id']}/join-public", headers=token)
+            assert res.status_code == 200
+
+        last_downgrade_res = await client.patch(
+            f"/api/courses/{course['id']}/members/{alice_id}",
+            headers=alice,
+            json={"role": "student"},
+        )
+        assert last_downgrade_res.status_code == 409
+        assert "last maintainer" in last_downgrade_res.json()["detail"]
+
+        remove_member_res = await client.delete(
+            f"/api/courses/{course['id']}/members/{bob_id}", headers=alice
+        )
+        assert remove_member_res.status_code == 200
+
+        bob_course_res = await client.get(f"/api/courses/{course['id']}", headers=bob)
+        assert bob_course_res.status_code == 403
+
+        non_maintainer_remove_res = await client.delete(
+            f"/api/courses/{course['id']}/members/{carol_id}",
+            headers=bob,
+        )
+        assert non_maintainer_remove_res.status_code == 403
+
+        leave_res = await client.post(f"/api/courses/{course['id']}/leave", headers=carol)
+        assert leave_res.status_code == 200
+
+        last_maintainer_leave_res = await client.post(
+            f"/api/courses/{course['id']}/leave",
+            headers=alice,
+        )
+        assert last_maintainer_leave_res.status_code == 409
+        assert "last maintainer" in last_maintainer_leave_res.json()["detail"]
+
+        promote_dave_res = await client.patch(
+            f"/api/courses/{course['id']}/members/{dave_id}",
+            headers=alice,
+            json={"role": "maintainer"},
+        )
+        assert promote_dave_res.status_code == 200
+
+        alice_leave_res = await client.post(
+            f"/api/courses/{course['id']}/leave",
+            headers=alice,
+        )
+        assert alice_leave_res.status_code == 200
+        assert (
+            app.state.db.one(
+                "SELECT role FROM course_members WHERE course_id = ? AND user_id = ?",
+                (course["id"], alice_id),
+            )
+            is None
+        )
+
+        final_leave_res = await client.post(f"/api/courses/{course['id']}/leave", headers=dave)
+        assert final_leave_res.status_code == 409
+        assert "last maintainer" in final_leave_res.json()["detail"]
+
+        self_remove_res = await client.delete(
+            f"/api/courses/{course['id']}/members/{dave_id}",
+            headers=dave,
+        )
+        assert self_remove_res.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_node_deletion_blocked_by_subtree_content(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        auth_res = await client.post(
+            "/api/auth/register",
+            json={"username": "maintainer", "password": "password123", "display_name": "Maintainer"},
+        )
+        assert auth_res.status_code == 200
+        headers = auth_headers(auth_res.json()["token"])
+
+        course_res = await client.post(
+            "/api/courses",
+            headers=headers,
+            json={"name": "Algorithms", "description": "", "semester": "", "tags": []},
+        )
+        assert course_res.status_code == 200
+        course = course_res.json()
+
+        tree_res = await client.get(f"/api/courses/{course['id']}/tree", headers=headers)
+        assert tree_res.status_code == 200
+        root_id = tree_res.json()["tree"]["id"]
+
+        chapter_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": root_id, "type": "chapter", "title": "Chapter"},
+        )
+        assert chapter_res.status_code == 200
+        chapter_id = chapter_res.json()["id"]
+
+        point_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": chapter_id, "type": "knowledge_point", "title": "Point"},
+        )
+        assert point_res.status_code == 200
+        point_id = point_res.json()["id"]
+
+        subpoint_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": point_id, "type": "knowledge_point", "title": "Sub Point"},
+        )
+        assert subpoint_res.status_code == 200
+        subpoint_id = subpoint_res.json()["id"]
+
+        note_res = await client.post(
+            "/api/notes",
+            headers=headers,
+            json={
+                "course_id": course["id"],
+                "node_id": subpoint_id,
+                "title": "Nested note",
+                "content_text": "content",
+                "visibility": "private",
+                "status": "draft",
+            },
+        )
+        assert note_res.status_code == 200
+
+        delete_chapter_res = await client.delete(f"/api/tree/nodes/{chapter_id}", headers=headers)
+        assert delete_chapter_res.status_code == 409
+        detail = delete_chapter_res.json()["detail"]
+        assert detail["message"] == "node has content"
+        assert detail["counts"]["subtree_node_count"] == 3
+        assert detail["counts"]["note_count"] == 1
+        assert detail["counts"]["mistake_count"] == 0
+
+        note_delete_res = await client.delete(f"/api/notes/{note_res.json()['id']}", headers=headers)
+        assert note_delete_res.status_code == 200
+
+        delete_subpoint_res = await client.delete(f"/api/tree/nodes/{subpoint_id}", headers=headers)
+        assert delete_subpoint_res.status_code == 200
+        delete_point_res = await client.delete(f"/api/tree/nodes/{point_id}", headers=headers)
+        assert delete_point_res.status_code == 200
+        delete_chapter_after_content_clear_res = await client.delete(f"/api/tree/nodes/{chapter_id}", headers=headers)
+        assert delete_chapter_after_content_clear_res.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_node_move_rejects_cyclic_hierarchy(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "noteweave.sqlite3"),
+            file_storage_dir=str(tmp_path / "uploads"),
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        auth_res = await client.post(
+            "/api/auth/register",
+            json={"username": "maintainer", "password": "password123", "display_name": "Maintainer"},
+        )
+        assert auth_res.status_code == 200
+        headers = auth_headers(auth_res.json()["token"])
+
+        course_res = await client.post(
+            "/api/courses",
+            headers=headers,
+            json={"name": "Deep Tree", "description": "", "semester": "", "tags": []},
+        )
+        assert course_res.status_code == 200
+        course = course_res.json()
+
+        tree_res = await client.get(f"/api/courses/{course['id']}/tree", headers=headers)
+        assert tree_res.status_code == 200
+        root_id = tree_res.json()["tree"]["id"]
+
+        chapter_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": root_id, "type": "chapter", "title": "Chapter A"},
+        )
+        assert chapter_res.status_code == 200
+        chapter_id = chapter_res.json()["id"]
+
+        point_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": chapter_id, "type": "knowledge_point", "title": "Point A"},
+        )
+        assert point_res.status_code == 200
+        point_id = point_res.json()["id"]
+
+        subpoint_res = await client.post(
+            f"/api/courses/{course['id']}/tree/nodes",
+            headers=headers,
+            json={"parent_id": point_id, "type": "knowledge_point", "title": "Sub Point A"},
+        )
+        assert subpoint_res.status_code == 200
+        subpoint_id = subpoint_res.json()["id"]
+
+        reject_move_res = await client.post(
+            f"/api/tree/nodes/{chapter_id}/move",
+            headers=headers,
+            json={"parent_id": subpoint_id, "order_index": 0},
+        )
+        assert reject_move_res.status_code == 400
+        assert reject_move_res.json()["detail"] == "cannot move node into its own subtree"
+
+        move_to_root_res = await client.post(
+            f"/api/tree/nodes/{subpoint_id}/move",
+            headers=headers,
+            json={"parent_id": root_id, "order_index": 0},
+        )
+        assert move_to_root_res.status_code == 200

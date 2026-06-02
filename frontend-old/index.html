@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="description"
+      content="NoteWeave 是课程知识协作系统的高端轻量前端页面，围绕课程知识树、笔记、错题与复习形成稳定闭环。"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NoteWeave · 课程知识协作</title>
+    <link rel="stylesheet" href="./design-system.css" />
+    <link rel="stylesheet" href="./app-premium.css" />
+    <link rel="stylesheet" href="./landing.css" />
+  </head>
+  <body class="landing-page">
+    <div id="noteweave-app"></div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="./tree.js"></script>
+    <script src="./render.js"></script>
+    <script src="./app.js"></script>
+    <script src="./page-templates.js"></script>
+    <script src="./vue-bootstrap.js" data-mount="#noteweave-app"></script>
+  </body>
+</html>

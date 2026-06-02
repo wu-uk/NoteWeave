@@ -24,6 +24,7 @@ logs/
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 
 # Environment and editor files
 .env

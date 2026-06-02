@@ -40,21 +40,43 @@ env UV_CACHE_DIR=/root/project/NoteWeave/.uv-cache ../.tools/uv/bin/uv run --no-
 curl http://127.0.0.1:8000/health
 ```
 
-## 前端工作台
+## 前端工作台与展示页
 
-当前前端位于 `frontend/`，是无构建依赖的静态页面。先启动后端，再直接打开：
+当前前端位于 `frontend/`，使用 Vue 3 + Vite + TypeScript。旧的无构建链前端已整体保留到 `frontend-old/`。
 
-[frontend/index.html](/root/project/NoteWeave/frontend/index.html)
+- `#landing`：产品介绍页（功能模块/价值主张）
+- `#workspace`：课程知识协作工作台
 
-也可以用本地静态服务预览：
+安装依赖：
 
 ```bash
 cd /root/project/NoteWeave/frontend
-python3 -m http.server 5173 --bind 127.0.0.1
+npm install
 ```
 
-访问：
+开发预览：
+
+```bash
+cd /root/project/NoteWeave/frontend
+npm run dev
+```
+
+构建验证：
+
+```bash
+cd /root/project/NoteWeave/frontend
+npm run typecheck
+npm run build
+```
+
+默认访问：
 
 ```text
 http://127.0.0.1:5173
+```
+
+工作台可直接打开：
+
+```text
+http://127.0.0.1:5173/#workspace
 ```

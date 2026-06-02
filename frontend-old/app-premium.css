@@ -1,0 +1,232 @@
+:root {
+  --nw-bg: #f4f6fb;
+  --nw-text: #0f172a;
+  --nw-muted: #64748b;
+  --nw-line: #d9e1ee;
+  --nw-panel: #ffffff;
+  --nw-panel-soft: #f8fafc;
+  --nw-brand: #4f46e5;
+  --nw-brand-2: #5b52ff;
+  --nw-brand-soft: #f1f3ff;
+  --nw-success: #0f9f6e;
+  --nw-warning: #b45309;
+  --nw-danger: #be123c;
+  --nw-shadow-soft: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --nw-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  --nw-radius: 12px;
+}
+
+.noteweave-app {
+  background: radial-gradient(64rem 24rem at 8% -8%, #eef2ff 14%, transparent 62%),
+    radial-gradient(46rem 22rem at 92% 0%, #eaf7ff 12%, transparent 58%),
+    var(--nw-bg);
+  color: var(--nw-text);
+}
+
+.noteweave-app .shell {
+  gap: 14px;
+  padding: 14px;
+  max-width: 1780px;
+}
+
+.noteweave-app .sidebar,
+.noteweave-app .topbar,
+.noteweave-app .panel,
+.noteweave-app .discussion-card {
+  border-color: var(--nw-line);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.noteweave-app .sidebar,
+.noteweave-app .topbar,
+.noteweave-app .panel {
+  box-shadow: var(--nw-shadow-soft);
+}
+
+.noteweave-app .sidebar {
+  border-right: 1px solid #e2e8f2;
+  max-height: calc(100vh - 28px);
+}
+
+.noteweave-app .brand h1 {
+  letter-spacing: -0.02em;
+  font-size: 21px;
+}
+
+.noteweave-app .topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.noteweave-app .status,
+.noteweave-app .eyebrow,
+.noteweave-app .meta,
+.noteweave-app .item-meta {
+  color: var(--nw-muted);
+}
+
+.noteweave-app button {
+  min-height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--nw-brand), var(--nw-brand-2));
+}
+
+.noteweave-app button.secondary {
+  background: #f8faff;
+  color: #243046;
+  border: 1px solid var(--nw-line);
+}
+
+.noteweave-app button.secondary:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.noteweave-app .tabs {
+  border-radius: 10px;
+  border-color: #e2e8f0;
+  background: #fafbff;
+}
+
+.noteweave-app .tabs button {
+  height: 34px;
+  background: transparent;
+  border-radius: 8px;
+}
+
+.noteweave-app .tabs button.active {
+  background: var(--nw-panel);
+  border-color: var(--nw-line);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.noteweave-app .grid {
+  gap: 14px;
+}
+
+.noteweave-app .panel {
+  border-radius: var(--nw-radius);
+  background: var(--nw-panel);
+}
+
+.noteweave-app .panel:hover {
+  box-shadow: var(--nw-shadow);
+}
+
+.noteweave-app .panel-header {
+  margin-bottom: 12px;
+}
+
+.noteweave-app .panel h3 {
+  letter-spacing: -0.01em;
+}
+
+.noteweave-app .tree {
+  margin-top: 10px;
+}
+
+.noteweave-app .tree button {
+  min-height: 40px;
+}
+
+.noteweave-app .tree button.tree-node {
+  background: var(--nw-panel-soft);
+}
+
+.noteweave-app .tree button.tree-node.active {
+  color: #fff;
+}
+
+.noteweave-app .course-row,
+.noteweave-app .item,
+.noteweave-app .discussion-item,
+.noteweave-app .search-result,
+.noteweave-app .node-detail-section,
+.noteweave-app .metric {
+  border-radius: 10px;
+  border-color: var(--nw-line);
+}
+
+.noteweave-app .course-row:hover,
+.noteweave-app .item:hover,
+.noteweave-app .discussion-item:hover {
+  border-color: #c2d1ff;
+}
+
+.noteweave-app .item-title {
+  color: #111827;
+}
+
+.noteweave-app .item-actions button {
+  height: 32px;
+  padding: 0 12px;
+}
+
+.noteweave-app .empty-state {
+  border-style: dashed;
+  border-color: #c8d4ea;
+  color: #64748b;
+}
+
+.noteweave-app .status-link,
+.noteweave-app .text-link {
+  border-radius: 999px;
+  border-color: var(--nw-line);
+  background: #fff;
+}
+
+.noteweave-app .status-link:hover,
+.noteweave-app .text-link:hover {
+  border-color: #c7d2fe;
+}
+
+.noteweave-app .toast {
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18);
+}
+
+.noteweave-app .discussion-drawer {
+  inset: 10px;
+}
+
+.noteweave-app .discussion-card {
+  width: min(420px, 100vw - 24px);
+}
+
+.landing-page {
+  background: radial-gradient(56rem 20rem at 20% -12%, #edf2ff 14%, transparent 58%),
+    radial-gradient(34rem 14rem at 92% -10%, #e9fbff 10%, transparent 52%),
+    #f5f7fb;
+}
+
+.landing-page .top-actions {
+  gap: 8px;
+}
+
+.landing-page .section {
+  position: relative;
+}
+
+.landing-page .hero,
+.landing-page .workflow-card,
+.landing-page .insight-card,
+.landing-page .feature-matrix,
+.landing-page .feature-card,
+.landing-page .cta-bar {
+  border-radius: 14px;
+}
+
+@media (max-width: 1100px) {
+  .noteweave-app .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .noteweave-app .workspace {
+    padding-right: 0;
+  }
+
+  .noteweave-app .topbar {
+    position: relative;
+  }
+}

@@ -25,7 +25,9 @@ from noteweave.api.schemas import (
     MemberRoleRequest,
     MistakeCreateRequest,
     MistakeUpdateRequest,
+    NoteAskRequest,
     NoteCreateRequest,
+    NoteIngestRequest,
     NoteUpdateRequest,
     ReactionCreateRequest,
     RegisterRequest,
@@ -359,13 +361,77 @@ def register_routes(app: FastAPI) -> None:
         db: Database = Depends(get_db),
     ):
         ensure_maintainer(db, course_id, user["id"])
-        if not db.one("SELECT 1 FROM course_members WHERE course_id = ? AND user_id = ?", (course_id, member_id)):
+        current = db.one(
+            "SELECT role FROM course_members WHERE course_id = ? AND user_id = ?",
+            (course_id, member_id),
+        )
+        if not current:
             raise HTTPException(status_code=404, detail="course member not found")
+        if current["role"] == "maintainer" and payload.role != "maintainer":
+            ensure_not_last_maintainer(db, course_id, member_id)
+
         db.execute(
             "UPDATE course_members SET role = ? WHERE course_id = ? AND user_id = ?",
             (payload.role, course_id, member_id),
         )
         log_audit(db, course_id, user["id"], "member.role_update", "user", member_id, {"role": payload.role})
+        return {"status": "ok"}
+
+    @app.delete("/api/courses/{course_id}/members/{member_id}")
+    async def remove_course_member(
+        course_id: int,
+        member_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        ensure_maintainer(db, course_id, user["id"])
+        if member_id == int(user["id"]):
+            raise HTTPException(status_code=400, detail="cannot remove self")
+
+        target = db.one(
+            "SELECT role FROM course_members WHERE course_id = ? AND user_id = ?",
+            (course_id, member_id),
+        )
+        if not target:
+            raise HTTPException(status_code=404, detail="course member not found")
+
+        if target["role"] == "maintainer":
+            ensure_not_last_maintainer(db, course_id, member_id)
+
+        db.execute(
+            "DELETE FROM course_members WHERE course_id = ? AND user_id = ?",
+            (course_id, member_id),
+        )
+        log_audit(
+            db,
+            course_id,
+            user["id"],
+            "member.remove",
+            "user",
+            member_id,
+            {"role": target["role"]},
+        )
+        return {"status": "ok"}
+
+    @app.post("/api/courses/{course_id}/leave")
+    async def leave_course(
+        course_id: int,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+    ):
+        role = db.one(
+            "SELECT role FROM course_members WHERE course_id = ? AND user_id = ?",
+            (course_id, user["id"]),
+        )
+        if not role:
+            raise HTTPException(status_code=403, detail="not a course member")
+        if role["role"] == "maintainer":
+            ensure_not_last_maintainer(db, course_id, int(user["id"]))
+        db.execute(
+            "DELETE FROM course_members WHERE course_id = ? AND user_id = ?",
+            (course_id, user["id"]),
+        )
+        log_audit(db, course_id, user["id"], "course.leave", "user", user["id"], {"role": role["role"]})
         return {"status": "ok"}
 
     @app.get("/api/courses/{course_id}/audit-logs")
@@ -480,6 +546,8 @@ def register_routes(app: FastAPI) -> None:
         parent = get_parent_node(db, int(node["course_id"]), payload.parent_id)
         if int(parent["id"]) == node_id:
             raise HTTPException(status_code=400, detail="cannot move node under itself")
+        if is_descendant(db, node_id=int(node["id"]), candidate_parent_id=int(parent["id"])):
+            raise HTTPException(status_code=400, detail="cannot move node into its own subtree")
         db.execute(
             "UPDATE knowledge_nodes SET parent_id = ?, order_index = ?, updated_at = ? WHERE id = ?",
             (parent["id"], payload.order_index, now_iso(), node_id),
@@ -548,6 +616,79 @@ def register_routes(app: FastAPI) -> None:
         refresh_note_search_chunk(db, note_id)
         log_audit(db, payload.course_id, user["id"], "note.create", "note", note_id, {"visibility": payload.visibility})
         return serialize_note(get_note(db, note_id), db, user_id=user["id"])
+
+    @app.post("/api/notes/ingest")
+    async def ingest_note(
+        payload: NoteIngestRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        output = await AIAssistService(settings).classify_note(payload.title, payload.content_text, payload.tags)
+        classification = output.result
+        course = ensure_ai_course(db, user["id"], classification["course_name"], classification.get("tags", []))
+        node = ensure_ai_node(db, user["id"], int(course["id"]), classification["node_title"])
+        ts = now_iso()
+        note_id = db.execute(
+            """
+            INSERT INTO notes
+              (course_id, node_id, title, content_json, content_text, content_format, visibility, status, summary, tags, author_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                course["id"],
+                node["id"],
+                payload.title,
+                dumps({"ingest": "ai-classified"}),
+                payload.content_text,
+                payload.visibility,
+                "published" if payload.visibility == "shared" else "draft",
+                classification.get("summary", ""),
+                dumps(classification.get("tags", [])),
+                user["id"],
+                ts,
+                ts,
+            ),
+        )
+        create_note_version(db, note_id, user["id"], "ai ingest")
+        refresh_note_search_chunk(db, note_id)
+        log_audit(
+            db,
+            int(course["id"]),
+            user["id"],
+            "note.ingest",
+            "note",
+            note_id,
+            {"course": course["name"], "node": node["title"], "source": classification.get("source", output.source)},
+        )
+        return {
+            "note": serialize_note(get_note(db, note_id), db, user_id=user["id"]),
+            "course": serialize_course(course, db=db, user_id=user["id"]),
+            "node": serialize_node(node, db),
+            "classification": classification,
+        }
+
+    @app.post("/api/notes/ask")
+    async def ask_notes(
+        payload: NoteAskRequest,
+        user: dict[str, Any] = Depends(current_user),
+        db: Database = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ):
+        course_rows = user_courses(db, user["id"])
+        course_ids = [int(row["id"]) for row in course_rows]
+        if payload.course_id is not None:
+            ensure_member(db, payload.course_id, user["id"])
+            course_ids = [payload.course_id]
+        for course_id in course_ids:
+            backfill_course_search_chunks(db, course_id)
+        contexts = retrieve_note_contexts(db, user["id"], payload.question, course_ids, payload.limit)
+        output = await AIAssistService(settings).answer_question(payload.question, contexts)
+        return {
+            "answer": output.result.get("answer", ""),
+            "source": output.result.get("source", output.source),
+            "contexts": contexts,
+        }
 
     @app.get("/api/notes")
     async def list_notes(
@@ -1393,6 +1534,110 @@ def get_course(db: Database, course_id: int) -> dict[str, Any]:
     return row
 
 
+def user_courses(db: Database, user_id: int) -> list[dict[str, Any]]:
+    return db.all(
+        """
+        SELECT c.*
+        FROM courses c
+        JOIN course_members m ON m.course_id = c.id
+        WHERE m.user_id = ?
+        ORDER BY c.updated_at DESC
+        """,
+        (user_id,),
+    )
+
+
+def ensure_ai_course(db: Database, user_id: int, name: str, tags: list[str]) -> dict[str, Any]:
+    clean_name = (name or "综合笔记").strip()[:120] or "综合笔记"
+    row = db.one(
+        """
+        SELECT c.*
+        FROM courses c
+        JOIN course_members m ON m.course_id = c.id
+        WHERE m.user_id = ? AND lower(c.name) = lower(?)
+        LIMIT 1
+        """,
+        (user_id, clean_name),
+    )
+    if row:
+        db.execute("UPDATE courses SET updated_at = ? WHERE id = ?", (now_iso(), row["id"]))
+        return get_course(db, int(row["id"]))
+
+    ts = now_iso()
+    invite_code = secrets.token_urlsafe(8)
+    course_tags = sorted({str(tag).strip() for tag in [*tags, "ai-classified"] if str(tag).strip()})[:10]
+    course_id = db.execute(
+        """
+        INSERT INTO courses
+          (name, description, semester, tags, invite_code, created_by, created_at, updated_at)
+        VALUES (?, ?, '', ?, ?, ?, ?, ?)
+        """,
+        (
+            clean_name,
+            "AI 自动根据笔记内容生成的内部分类。",
+            dumps(course_tags),
+            invite_code,
+            user_id,
+            ts,
+            ts,
+        ),
+    )
+    db.transaction(
+        [
+            (
+                "INSERT INTO course_members (course_id, user_id, role, joined_at) VALUES (?, ?, 'maintainer', ?)",
+                (course_id, user_id, ts),
+            ),
+            (
+                """
+                INSERT INTO knowledge_nodes
+                  (course_id, parent_id, type, title, description, metadata, order_index, depth, path, created_by, created_at, updated_at)
+                VALUES (?, NULL, 'course_root', ?, 'AI 自动分类根节点', ?, 0, 0, ?, ?, ?, ?)
+                """,
+                (course_id, clean_name, dumps({"source": "ai-classified"}), clean_name, user_id, ts, ts),
+            ),
+        ]
+    )
+    return get_course(db, course_id)
+
+
+def ensure_ai_node(db: Database, user_id: int, course_id: int, title: str) -> dict[str, Any]:
+    clean_title = (title or "综合笔记").strip()[:160] or "综合笔记"
+    root = db.one("SELECT * FROM knowledge_nodes WHERE course_id = ? AND type = 'course_root'", (course_id,))
+    if not root:
+        raise HTTPException(status_code=500, detail="course root missing")
+    row = db.one(
+        """
+        SELECT *
+        FROM knowledge_nodes
+        WHERE course_id = ? AND parent_id = ? AND lower(title) = lower(?)
+        LIMIT 1
+        """,
+        (course_id, root["id"], clean_title),
+    )
+    if row:
+        return row
+    ts = now_iso()
+    node_id = db.execute(
+        """
+        INSERT INTO knowledge_nodes
+          (course_id, parent_id, type, title, description, metadata, order_index, depth, path, created_by, created_at, updated_at)
+        VALUES (?, ?, 'knowledge_point', ?, 'AI 自动归档知识点', ?, 0, 1, ?, ?, ?, ?)
+        """,
+        (
+            course_id,
+            root["id"],
+            clean_title,
+            dumps({"source": "ai-classified"}),
+            f"{root['path']} / {clean_title}",
+            user_id,
+            ts,
+            ts,
+        ),
+    )
+    return get_node(db, node_id)
+
+
 def serialize_course(row: dict[str, Any], db: Database, user_id: int) -> dict[str, Any]:
     stats = db.one(
         """
@@ -1466,6 +1711,18 @@ def ensure_maintainer(db: Database, course_id: int, user_id: int) -> None:
         raise HTTPException(status_code=403, detail="maintainer role required")
 
 
+def ensure_not_last_maintainer(db: Database, course_id: int, user_id: int) -> None:
+    role = member_role(db, course_id, user_id)
+    if role != "maintainer":
+        return
+    maintainer_count = db.one(
+        "SELECT COUNT(*) AS count FROM course_members WHERE course_id = ? AND role = 'maintainer'",
+        (course_id,),
+    )["count"]
+    if maintainer_count <= 1:
+        raise HTTPException(status_code=409, detail="last maintainer cannot be removed or leave")
+
+
 def ensure_owner_or_maintainer(db: Database, course_id: int, owner_id: int, user_id: int) -> None:
     if owner_id == user_id:
         return
@@ -1498,16 +1755,53 @@ def ensure_node_in_course(db: Database, node_id: int, course_id: int) -> None:
         raise HTTPException(status_code=404, detail="node not found in course")
 
 
+def is_descendant(db: Database, node_id: int, candidate_parent_id: int) -> bool:
+    row = db.one(
+        """
+        WITH RECURSIVE descendants(id) AS (
+          SELECT id
+          FROM knowledge_nodes
+          WHERE id = ?
+          UNION ALL
+          SELECT k.id
+          FROM knowledge_nodes AS k
+          JOIN descendants AS d ON k.parent_id = d.id
+        )
+        SELECT 1 AS matched
+        FROM descendants
+        WHERE id = ?
+        """,
+        (node_id, candidate_parent_id),
+    )
+    return bool(row)
+
+
 def node_content_counts(db: Database, node_id: int) -> dict[str, int]:
     row = db.one(
         """
+        WITH RECURSIVE subtree(id) AS (
+          SELECT id
+          FROM knowledge_nodes
+          WHERE id = ?
+          UNION ALL
+          SELECT k.id
+          FROM knowledge_nodes AS k
+          JOIN subtree AS s ON k.parent_id = s.id
+        )
         SELECT
-          (SELECT COUNT(*) FROM notes WHERE node_id = ?) AS note_count,
-          (SELECT COUNT(*) FROM mistakes WHERE node_id = ?) AS mistake_count
+          (SELECT COUNT(*) FROM subtree) AS subtree_node_count,
+          (SELECT COUNT(*) FROM notes WHERE node_id IN (SELECT id FROM subtree)) AS note_count,
+          (SELECT COUNT(*) FROM mistakes WHERE node_id IN (SELECT id FROM subtree)) AS mistake_count
         """,
-        (node_id, node_id),
+        (node_id,),
     )
-    return {"note_count": int(row["note_count"]), "mistake_count": int(row["mistake_count"])}
+    if not row:
+        return {"subtree_node_count": 0, "note_count": 0, "mistake_count": 0}
+    return {
+        "subtree_node_count": int(row["subtree_node_count"]),
+        "note_count": int(row["note_count"]),
+        "mistake_count": int(row["mistake_count"]),
+    }
 
 
 def serialize_node(
@@ -2191,6 +2485,63 @@ def match_search_chunk(
         "score": score,
         "updated_at": chunk["updated_at"],
     }
+
+
+def retrieve_note_contexts(
+    db: Database,
+    user_id: int,
+    question: str,
+    course_ids: list[int],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not course_ids:
+        return []
+    query_terms = search_terms(question)
+    placeholders = ",".join("?" for _ in course_ids)
+    rows = db.all(
+        f"""
+        SELECT sc.*
+        FROM search_chunks sc
+        WHERE sc.course_id IN ({placeholders})
+          AND sc.source_type = 'note'
+        ORDER BY sc.updated_at DESC
+        """,
+        tuple(course_ids),
+    )
+    contexts: list[dict[str, Any]] = []
+    for row in rows:
+        if row["visibility"] != "shared" and row["author_id"] != user_id:
+            continue
+        fields = " ".join(
+            str(row[name] or "")
+            for name in ["title", "content", "summary", "tags_text", "node_path"]
+        ).lower()
+        score = sum(1 for term in query_terms if term in fields)
+        if score == 0 and query_terms:
+            continue
+        contexts.append(
+            {
+                "source_type": row["source_type"],
+                "source_id": row["source_id"],
+                "title": row["title"],
+                "content": row["content"],
+                "summary": row["summary"],
+                "snippet": make_snippet(row["content"] or row["summary"] or row["title"], query_terms[0] if query_terms else ""),
+                "node_path": row["node_path"] or None,
+                "score": score,
+                "updated_at": row["updated_at"],
+            }
+        )
+    contexts.sort(key=lambda item: (item["score"], item["updated_at"]), reverse=True)
+    return contexts[:limit]
+
+
+def search_terms(value: str) -> list[str]:
+    terms = [term.lower() for term in value.split() if term.strip()]
+    if terms:
+        return terms[:10]
+    compact = value.strip().lower()
+    return [compact] if compact else []
 
 
 def match_note(

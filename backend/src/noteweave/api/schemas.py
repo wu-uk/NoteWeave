@@ -77,6 +77,19 @@ class NoteCreateRequest(BaseModel):
     tags: list[str] = []
 
 
+class NoteIngestRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    content_text: str = Field(min_length=1)
+    visibility: Literal["private", "shared"] = "private"
+    tags: list[str] = []
+
+
+class NoteAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    course_id: int | None = None
+    limit: int = Field(default=6, ge=1, le=12)
+
+
 class NoteUpdateRequest(BaseModel):
     node_id: int | None = None
     title: str | None = Field(default=None, min_length=1, max_length=180)
