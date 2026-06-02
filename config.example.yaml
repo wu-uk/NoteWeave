@@ -1,0 +1,11 @@
+app:
+  env: dev
+  database_path: data/noteweave.sqlite3
+  file_storage_dir: uploads
+  max_upload_bytes: 5242880
+
+ai:
+  enabled: true
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: replace-with-your-api-key
+  chat_model: qwen-plus

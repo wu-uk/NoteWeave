@@ -118,6 +118,64 @@
   white-space: nowrap;
 }
 
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 250, 0.88), rgba(246, 245, 241, 0.98)),
+    linear-gradient(90deg, rgba(47, 111, 104, 0.08), rgba(141, 90, 43, 0.08));
+}
+
+.auth-card {
+  display: grid;
+  width: min(100%, 460px);
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 253, 250, 0.96);
+  box-shadow: var(--shadow);
+}
+
+.auth-card > .brand-button {
+  justify-content: flex-start;
+  min-height: 58px;
+  padding: 12px;
+}
+
+.auth-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-copy small {
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-copy h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(28px, 5vw, 42px);
+  line-height: 1.05;
+}
+
+.auth-copy p {
+  margin: 0;
+  color: #4f5967;
+  line-height: 1.7;
+}
+
+.auth-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 340px;

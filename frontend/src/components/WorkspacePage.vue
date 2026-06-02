@@ -1,5 +1,41 @@
 <template>
-  <main class="app-shell">
+  <main v-if="!user" class="auth-shell">
+    <section class="auth-card">
+      <button class="brand-button" type="button" @click="$emit('home')">
+        <span class="brand-mark">N</span>
+        <span>
+          <strong>NoteWeave</strong>
+          <small>back to landing</small>
+        </span>
+      </button>
+      <div class="auth-copy">
+        <small>登录后进入工作台</small>
+        <h1>开始记录、上传和询问你的笔记</h1>
+        <p>未登录用户只能查看 landing。登录或注册后，才能使用笔记流、文件导入、共享互动和问答功能。</p>
+      </div>
+      <form class="form-stack" @submit.prevent="login">
+        <input v-model.trim="auth.username" placeholder="用户名" autocomplete="username" />
+        <input v-model="auth.password" placeholder="密码" type="password" autocomplete="current-password" />
+        <input v-model.trim="auth.displayName" placeholder="昵称（注册时可填）" />
+        <div class="split-actions">
+          <button type="submit" class="primary-button">登录</button>
+          <button type="button" class="ghost-button" @click="register">注册</button>
+        </div>
+      </form>
+      <div class="auth-status">
+        <span :class="['status-pill', backendReady ? 'ok' : 'warn']">
+          <Activity :size="14" />
+          {{ backendReady ? "API 在线" : "API 未连接" }}
+        </span>
+        <span class="status-pill">
+          <Sparkles :size="14" />
+          {{ aiStatus?.remote_configured ? `模型 ${aiStatus.chat_model}` : "Fallback AI" }}
+        </span>
+      </div>
+    </section>
+  </main>
+
+  <main v-else class="app-shell">
     <aside class="rail">
       <button class="brand-button" type="button" @click="$emit('home')">
         <span class="brand-mark">N</span>
@@ -19,15 +55,6 @@
           <small>@{{ user.username }} · {{ user.system_role === "admin" ? "管理员" : "普通用户" }}</small>
           <button type="button" class="ghost-button" @click="logout">退出</button>
         </div>
-        <form v-else class="form-stack" @submit.prevent="login">
-          <input v-model.trim="auth.username" placeholder="用户名" autocomplete="username" />
-          <input v-model="auth.password" placeholder="密码" type="password" autocomplete="current-password" />
-          <input v-model.trim="auth.displayName" placeholder="昵称（注册时可填）" />
-          <div class="split-actions">
-            <button type="submit" class="primary-button">登录</button>
-            <button type="button" class="ghost-button" @click="register">注册</button>
-          </div>
-        </form>
       </section>
 
       <section v-if="user?.system_role === 'admin'" class="quiet-panel admin-panel">

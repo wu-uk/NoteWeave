@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from noteweave.api.app import create_app
+from noteweave.core.ai import AIAssistService
 from noteweave.core.settings import Settings
 
 
@@ -1227,3 +1228,37 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
             json={"target_type": "note", "target_id": private_note_id, "content": "Should not work."},
         )
         assert private_comment_res.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_real_ai_api_classifies_and_answers_from_config():
+    settings = Settings.load()
+    if not (settings.model_base_url and settings.model_api_key and settings.chat_model):
+        pytest.skip("real AI API config is not available")
+
+    service = AIAssistService(settings)
+    classification = await service.classify_note(
+        "Dijkstra shortest path",
+        "Dijkstra algorithm works on graphs with non-negative edge weights and uses a priority queue.",
+        ["graph"],
+    )
+    assert classification.source == "remote"
+    assert classification.result["source"] == "remote"
+    assert classification.result["course_name"]
+    assert classification.result["node_title"]
+    assert classification.result["summary"]
+    assert classification.result["tags"]
+
+    answer = await service.answer_question(
+        "What edge weights does Dijkstra require?",
+        [
+            {
+                "title": "Dijkstra shortest path",
+                "node_path": "Computer Science / Graph Algorithms",
+                "content": "Dijkstra algorithm works on graphs with non-negative edge weights.",
+            }
+        ],
+    )
+    assert answer.source == "remote"
+    assert answer.result["source"] == "remote"
+    assert answer.result["answer"].strip()

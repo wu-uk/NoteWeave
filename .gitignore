@@ -30,6 +30,9 @@ dist/
 .env
 .env.*
 !.env.example
+config.yaml
+config.yml
+config.ymal
 .DS_Store
 .idea/
 .vscode/
