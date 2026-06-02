@@ -30,6 +30,34 @@ def make_docx_bytes(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def make_pdf_bytes(text: str) -> bytes:
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT\n/F1 24 Tf\n72 720 Td\n({escaped}) Tj\nET\n".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for index, payload in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode("ascii"))
+        pdf.extend(payload)
+        pdf.extend(b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        f"trailer\n<< /Root 1 0 R /Size {len(objects) + 1} >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(pdf)
+
+
 @pytest.mark.anyio
 async def test_course_note_collaboration_search_and_ai_flow(tmp_path):
     app = create_app(
@@ -1115,6 +1143,23 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert docx_res.json()["document"]["parser"] == "docx-xml"
         assert "Quick sort uses partitioning." in docx_res.json()["note"]["content_text"]
         private_note_id = docx_res.json()["note"]["id"]
+
+        pdf_res = await client.post(
+            "/api/notes/import",
+            headers=headers,
+            json={
+                "file_name": "shortest-path.pdf",
+                "content_type": "application/pdf",
+                "data_base64": base64.b64encode(make_pdf_bytes("PDF graph shortest path note")).decode("ascii"),
+                "visibility": "shared",
+                "tags": ["pdf", "graph"],
+            },
+        )
+        assert pdf_res.status_code == 200
+        pdf_imported = pdf_res.json()
+        assert pdf_imported["document"]["parser"] == "pypdf"
+        assert "PDF graph shortest path note" in pdf_imported["note"]["content_text"]
+        assert pdf_imported["attachment"]["file_name"] == "shortest-path.pdf"
 
         qa_res = await client.post(
             "/api/notes/ask",
