@@ -31,6 +31,13 @@ function defaultApiBase(): string {
 
 export const apiBase = localStorage.getItem(API_BASE_KEY) || import.meta.env.VITE_NOTEWEAVE_API_BASE || defaultApiBase();
 
+export function resolveApiUrl(path: string): string {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!path.startsWith("/")) return path;
+  return `${apiBase}${path}`;
+}
+
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) || "";
 }
@@ -222,7 +229,7 @@ export const api = {
     });
   },
 
-  askNotes(payload: { question: string; course_id?: number | null; limit?: number }) {
+  askNotes(payload: { question: string; course_id?: number | null; note_ids?: number[]; limit?: number }) {
     return request<NoteAskResult>("/api/notes/ask", {
       method: "POST",
       body: JSON.stringify(payload)

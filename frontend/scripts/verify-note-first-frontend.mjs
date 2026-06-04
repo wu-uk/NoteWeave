@@ -58,7 +58,7 @@ if (!workspace.includes('<main v-if="!user" class="auth-shell">')) {
 if (!workspace.includes('<main v-else class="app-shell knowledge-app">')) {
   violations.push("WorkspacePage.vue: app-shell must only render behind authenticated v-else gate");
 }
-for (const label of ["个人笔记", "共享笔记", "错题整理", "每日一题", "浮动知识点网络"]) {
+for (const label of ["个人笔记", "共享笔记", "错题整理", "每日一题", "知识网络"]) {
   if (!workspace.includes(label)) {
     violations.push(`WorkspacePage.vue: redesigned workspace is missing "${label}"`);
   }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 import secrets
 import sqlite3
 import zipfile
@@ -42,6 +43,7 @@ from noteweave.api.schemas import (
 )
 from noteweave.core.ai import AIAssistService
 from noteweave.core.database import Database, dumps, loads, now_iso
+from noteweave.core.modora_adapter import parse_document_with_modora_flow
 from noteweave.core.security import hash_password, new_token, verify_password
 from noteweave.core.settings import Settings
 
@@ -661,8 +663,15 @@ def register_routes(app: FastAPI) -> None:
         db: Database = Depends(get_db),
         settings: Settings = Depends(get_settings),
     ):
-        output = await AIAssistService(settings).classify_note(payload.title, payload.content_text, payload.tags)
+        course_candidates = ai_course_candidates(db, user["id"])
+        output = await AIAssistService(settings).classify_note(
+            payload.title,
+            payload.content_text,
+            payload.tags,
+            course_candidates=course_candidates,
+        )
         classification = output.result
+        classification = prefer_existing_course(db, user["id"], classification, payload.title, payload.content_text, payload.tags)
         course = ensure_ai_course(db, user["id"], classification["course_name"], classification.get("tags", []))
         node = ensure_ai_node(db, user["id"], int(course["id"]), classification["node_title"])
         ts = now_iso()
@@ -713,15 +722,27 @@ def register_routes(app: FastAPI) -> None:
         settings: Settings = Depends(get_settings),
     ):
         file_bytes = decode_upload_data(payload.data_base64, settings)
-        extracted = extract_document_text(payload.file_name, payload.content_type, file_bytes)
-        if not extracted["text"].strip():
-            raise HTTPException(status_code=422, detail="document text could not be extracted")
+        ai = AIAssistService(settings)
+        extracted = await parse_document_with_modora_flow(
+            file_name=payload.file_name,
+            content_type=payload.content_type,
+            file_bytes=file_bytes,
+            ai=ai,
+            settings=settings,
+        )
         title = document_title(payload.file_name)
-        output = await AIAssistService(settings).classify_note(title, extracted["text"], payload.tags)
+        course_candidates = ai_course_candidates(db, user["id"])
+        output = await ai.classify_note(title, extracted.text, payload.tags, course_candidates=course_candidates)
         classification = output.result
+        classification = prefer_existing_course(db, user["id"], classification, title, extracted.text, payload.tags)
         course = ensure_ai_course(db, user["id"], classification["course_name"], classification.get("tags", []))
         node = ensure_ai_node(db, user["id"], int(course["id"]), classification["node_title"])
         ts = now_iso()
+        content_json = {
+            "ingest": "document-import",
+            "document": extracted.metadata,
+            "modora_tree": extracted.tree,
+        }
         note_id = db.execute(
             """
             INSERT INTO notes
@@ -732,8 +753,8 @@ def register_routes(app: FastAPI) -> None:
                 course["id"],
                 node["id"],
                 title,
-                dumps({"ingest": "document-import", "document": extracted["metadata"]}),
-                extracted["text"],
+                dumps(content_json),
+                extracted.text,
                 payload.visibility,
                 "published" if payload.visibility == "shared" else "draft",
                 classification.get("summary", ""),
@@ -743,6 +764,15 @@ def register_routes(app: FastAPI) -> None:
                 ts,
             ),
         )
+        document_node = sync_modora_tree_to_knowledge_nodes(
+            db,
+            int(course["id"]),
+            int(node["id"]),
+            user["id"],
+            title,
+            extracted.tree,
+        )
+        db.execute("UPDATE notes SET node_id = ? WHERE id = ?", (document_node["id"], note_id))
         attachment = store_attachment(
             db,
             settings,
@@ -754,6 +784,19 @@ def register_routes(app: FastAPI) -> None:
             file_bytes=file_bytes,
             uploaded_by=user["id"],
         )
+        source_pdf_attachment = None
+        if extracted.source_pdf_bytes and extracted.source_pdf_name and extracted.source_pdf_name != attachment["file_name"]:
+            source_pdf_attachment = store_attachment(
+                db,
+                settings,
+                course_id=int(course["id"]),
+                note_id=note_id,
+                mistake_id=None,
+                file_name=extracted.source_pdf_name,
+                content_type="application/pdf",
+                file_bytes=extracted.source_pdf_bytes,
+                uploaded_by=user["id"],
+            )
         create_note_version(db, note_id, user["id"], "document import")
         refresh_note_search_chunk(db, note_id)
         log_audit(
@@ -765,17 +808,19 @@ def register_routes(app: FastAPI) -> None:
             note_id,
             {
                 "file_name": attachment["file_name"],
-                "parser": extracted["metadata"]["parser"],
+                "parser": extracted.metadata["parser"],
                 "source": classification.get("source", output.source),
             },
         )
+        note = serialize_note(get_note(db, note_id), db, user_id=user["id"])
         return {
-            "note": serialize_note(get_note(db, note_id), db, user_id=user["id"]),
+            "note": note,
             "course": serialize_course(course, db=db, user_id=user["id"]),
             "node": serialize_node(node, db),
             "classification": classification,
             "attachment": attachment,
-            "document": extracted["metadata"],
+            "source_pdf_attachment": source_pdf_attachment,
+            "document": extracted.metadata,
         }
 
     @app.post("/api/notes/ask")
@@ -792,14 +837,25 @@ def register_routes(app: FastAPI) -> None:
             course_ids = [payload.course_id]
         for course_id in course_ids:
             backfill_course_search_chunks(db, course_id)
-        contexts = retrieve_note_contexts(
+        ai = AIAssistService(settings)
+        print(
+            f"QA start user={user['id']} course_id={payload.course_id} note_ids={payload.note_ids} limit={payload.limit}",
+            flush=True,
+        )
+        contexts = await retrieve_note_contexts(
             db,
             user["id"],
             payload.question,
             course_ids if payload.course_id is not None else None,
+            payload.note_ids or None,
             payload.limit,
+            ai,
         )
-        output = await AIAssistService(settings).answer_question(payload.question, contexts)
+        output = await ai.answer_question(payload.question, contexts)
+        print(
+            f"QA done user={user['id']} contexts={len(contexts)} source={output.source}",
+            flush=True,
+        )
         return {
             "answer": output.result.get("answer", ""),
             "source": output.result.get("source", output.source),
@@ -1674,6 +1730,98 @@ def user_courses(db: Database, user_id: int) -> list[dict[str, Any]]:
     )
 
 
+def ai_course_candidates(db: Database, user_id: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for course in user_courses(db, user_id):
+        candidates.append(
+            {
+                "id": course["id"],
+                "name": course["name"],
+                "description": course["description"],
+                "tags": loads(course["tags"], []),
+            }
+        )
+    return candidates
+
+
+def prefer_existing_course(
+    db: Database,
+    user_id: int,
+    classification: dict[str, Any],
+    title: str,
+    content: str,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    candidates = ai_course_candidates(db, user_id)
+    if not candidates:
+        return classification
+
+    requested = str(classification.get("course_name") or "").strip()
+    requested_key = normalize_match_text(requested)
+    for course in candidates:
+        if normalize_match_text(str(course["name"])) == requested_key:
+            return classification
+
+    query = " ".join(
+        [
+            requested,
+            title,
+            " ".join(str(tag) for tag in (tags or [])),
+            " ".join(str(tag) for tag in classification.get("tags", []) if str(tag).strip())
+            if isinstance(classification.get("tags"), list)
+            else "",
+            content[:1200],
+        ]
+    )
+    query_tokens = match_tokens(query)
+    best_course: dict[str, Any] | None = None
+    best_score = 0
+    for course in candidates:
+        course_text = " ".join(
+            [
+                str(course.get("name") or ""),
+                str(course.get("description") or ""),
+                " ".join(str(tag) for tag in course.get("tags", []) if str(tag).strip())
+                if isinstance(course.get("tags"), list)
+                else "",
+            ]
+        )
+        course_tokens = match_tokens(course_text)
+        overlap = query_tokens & course_tokens
+        score = len(overlap) * 3
+        if requested_key and requested_key in normalize_match_text(str(course.get("name") or "")):
+            score += 8
+        if normalize_match_text(str(course.get("name") or "")) in normalize_match_text(query):
+            score += 10
+        if score > best_score:
+            best_score = score
+            best_course = course
+
+    if best_course and best_score >= 6:
+        adjusted = dict(classification)
+        adjusted["course_name"] = best_course["name"]
+        adjusted["matched_existing_course_id"] = best_course["id"]
+        adjusted["course_match_score"] = best_score
+        return adjusted
+    return classification
+
+
+def normalize_match_text(value: str) -> str:
+    return "".join(ch.lower() for ch in value if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def match_tokens(value: str) -> set[str]:
+    text = value.lower()
+    tokens = set(re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", text))
+    compact = normalize_match_text(value)
+    for length in (2, 3, 4, 5, 6):
+        for index in range(max(0, len(compact) - length + 1)):
+            token = compact[index : index + length]
+            if token:
+                tokens.add(token)
+    return tokens
+
+
 def ensure_ai_course(db: Database, user_id: int, name: str, tags: list[str]) -> dict[str, Any]:
     clean_name = (name or "综合笔记").strip()[:120] or "综合笔记"
     row = db.one(
@@ -1763,6 +1911,90 @@ def ensure_ai_node(db: Database, user_id: int, course_id: int, title: str) -> di
         ),
     )
     return get_node(db, node_id)
+
+
+def sync_modora_tree_to_knowledge_nodes(
+    db: Database,
+    course_id: int,
+    parent_id: int,
+    user_id: int,
+    document_title_value: str,
+    tree: dict[str, Any],
+) -> dict[str, Any]:
+    parent = get_node(db, parent_id)
+    ts = now_iso()
+    document_node_id = db.execute(
+        """
+        INSERT INTO knowledge_nodes
+          (course_id, parent_id, type, title, description, metadata, order_index, depth, path, created_by, created_at, updated_at)
+        VALUES (?, ?, 'chapter', ?, 'MoDora 文档解析根节点', ?, 0, ?, ?, ?, ?, ?)
+        """,
+        (
+            course_id,
+            parent_id,
+            document_title_value[:160] or "Imported document",
+            dumps({"source": "modora", "node_type": "document_root", "metadata": tree.get("metadata", "")}),
+            int(parent["depth"]) + 1,
+            f"{parent['path']} / {document_title_value[:160] or 'Imported document'}",
+            user_id,
+            ts,
+            ts,
+        ),
+    )
+    document_node = get_node(db, document_node_id)
+    for index, (title, child) in enumerate((tree.get("children") or {}).items()):
+        if isinstance(child, dict):
+            insert_modora_tree_node(db, course_id, document_node, user_id, title, child, index)
+    return document_node
+
+
+def insert_modora_tree_node(
+    db: Database,
+    course_id: int,
+    parent: dict[str, Any],
+    user_id: int,
+    title: str,
+    node: dict[str, Any],
+    order_index: int,
+) -> dict[str, Any]:
+    children = node.get("children") if isinstance(node.get("children"), dict) else {}
+    clean_title = (title or node.get("data") or "Untitled").strip()[:160] or "Untitled"
+    node_type = "chapter" if children else "knowledge_point"
+    ts = now_iso()
+    inserted_id = db.execute(
+        """
+        INSERT INTO knowledge_nodes
+          (course_id, parent_id, type, title, description, metadata, order_index, depth, path, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            course_id,
+            parent["id"],
+            node_type,
+            clean_title,
+            str(node.get("metadata") or "")[:500],
+            dumps(
+                {
+                    "source": "modora",
+                    "node_type": node.get("type", ""),
+                    "metadata": node.get("metadata", ""),
+                    "location": node.get("location", []),
+                    "keyword_cnt": node.get("keyword_cnt", 0),
+                }
+            ),
+            order_index,
+            int(parent["depth"]) + 1,
+            f"{parent['path']} / {clean_title}",
+            user_id,
+            ts,
+            ts,
+        ),
+    )
+    inserted = get_node(db, inserted_id)
+    for child_index, (child_title, child) in enumerate(children.items()):
+        if isinstance(child, dict):
+            insert_modora_tree_node(db, course_id, inserted, user_id, child_title, child, child_index)
+    return inserted
 
 
 def serialize_course(row: dict[str, Any], db: Database, user_id: int) -> dict[str, Any]:
@@ -2265,6 +2497,8 @@ def serialize_note(
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+    attachments = db.all("SELECT * FROM attachments WHERE note_id = ? ORDER BY id", (row["id"],))
+    data["attachments"] = [serialize_attachment(attachment) for attachment in attachments]
     if include_comments:
         comments = db.all(
             "SELECT * FROM comments WHERE target_type = 'note' AND target_id = ? ORDER BY created_at",
@@ -2786,51 +3020,79 @@ def match_search_chunk(
     }
 
 
-def retrieve_note_contexts(
+async def retrieve_note_contexts(
     db: Database,
     user_id: int,
     question: str,
     course_ids: list[int] | None,
+    note_ids: list[int] | None,
     limit: int,
+    ai: AIAssistService,
 ) -> list[dict[str, Any]]:
     query_terms = search_terms(question)
-    course_filter = ""
-    params: tuple[Any, ...] = ()
+    filters: list[str] = []
+    params: list[Any] = []
     if course_ids is not None:
         if not course_ids:
             return []
         placeholders = ",".join("?" for _ in course_ids)
-        course_filter = f"AND sc.course_id IN ({placeholders})"
-        params = tuple(course_ids)
+        filters.append(f"sc.course_id IN ({placeholders})")
+        params.extend(course_ids)
+    if note_ids is not None:
+        if not note_ids:
+            return []
+        unique_note_ids = sorted(set(note_ids))
+        placeholders = ",".join("?" for _ in unique_note_ids)
+        filters.append(f"sc.source_id IN ({placeholders})")
+        params.extend(unique_note_ids)
+    extra_filter = f"AND {' AND '.join(filters)}" if filters else ""
     rows = db.all(
         f"""
-        SELECT sc.*
+        SELECT sc.*, n.content_json AS note_content_json
         FROM search_chunks sc
+        LEFT JOIN notes n ON n.id = sc.source_id AND sc.source_type = 'note'
         WHERE sc.source_type = 'note'
-          {course_filter}
+          {extra_filter}
         ORDER BY sc.updated_at DESC
         """,
-        params,
+        tuple(params),
     )
     contexts: list[dict[str, Any]] = []
+    selected_note_filter = note_ids is not None
+    candidate_rows: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     for row in rows:
         if row["visibility"] != "shared" and row["author_id"] != user_id:
             continue
-        fields = " ".join(
+        content_json = loads(row["note_content_json"], {})
+        base_fields = " ".join(
             str(row[name] or "")
             for name in ["title", "content", "summary", "tags_text", "node_path"]
-        ).lower()
-        score = sum(1 for term in query_terms if term in fields)
-        if score == 0 and query_terms:
+        )
+        base_modora_text = modora_context_text(content_json)
+        lexical_score = sum(1 for term in query_terms if term in f"{base_fields} {base_modora_text}".lower())
+        if lexical_score == 0 and query_terms and not selected_note_filter:
             continue
+        candidate_rows.append((lexical_score, row, content_json))
+    if not selected_note_filter:
+        candidate_rows.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
+        candidate_rows = candidate_rows[: max(limit * 2, 6)]
+    for lexical_score, row, content_json in candidate_rows:
+        modora_hits = await retrieve_modora_evidence(ai, content_json, question, query_terms, selected_note_filter)
+        modora_text = "\n\n".join(hit["text"] for hit in modora_hits)
+        score = lexical_score + len(modora_hits) * 3
+        if score == 0 and query_terms and not selected_note_filter:
+            continue
+        content = row["content"] or ""
+        if modora_text:
+            content = f"MoDora CCTree evidence:\n{modora_text[:5000]}\n\nFull note:\n{content[:3000]}".strip()
         contexts.append(
             {
                 "source_type": row["source_type"],
                 "source_id": row["source_id"],
                 "title": row["title"],
-                "content": row["content"],
+                "content": content,
                 "summary": row["summary"],
-                "snippet": make_snippet(row["content"] or row["summary"] or row["title"], query_terms[0] if query_terms else ""),
+                "snippet": make_snippet(content or row["summary"] or row["title"], query_terms[0] if query_terms else ""),
                 "node_path": row["node_path"] or None,
                 "score": score,
                 "updated_at": row["updated_at"],
@@ -2841,11 +3103,153 @@ def retrieve_note_contexts(
 
 
 def search_terms(value: str) -> list[str]:
-    terms = [term.lower() for term in value.split() if term.strip()]
-    if terms:
-        return terms[:10]
-    compact = value.strip().lower()
-    return [compact] if compact else []
+    value = value.strip().lower()
+    if not value:
+        return []
+    terms: list[str] = []
+    terms.extend(re.findall(r"[a-z0-9_+#.-]{2,}", value))
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", value)
+    stop_pattern = r"(请问|请|解释|说明|分析|一下|是什么|为什么|如何|怎么|以及|或者|如果|是否|有关|之间|这个|那个|一个|哪些|多少|和|与|的|了|吗)"
+    for run in cjk_runs:
+        compact = re.sub(stop_pattern, " ", run)
+        chunks = re.findall(r"[\u4e00-\u9fff]{2,}", compact)
+        for chunk in chunks:
+            if 2 <= len(chunk) <= 12:
+                terms.append(chunk)
+            for size in (4, 3, 2):
+                if len(chunk) <= size:
+                    continue
+                terms.extend(chunk[index : index + size] for index in range(0, len(chunk) - size + 1))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term in seen:
+            continue
+        seen.add(term)
+        deduped.append(term)
+    return deduped[:32]
+
+
+async def retrieve_modora_evidence(
+    ai: AIAssistService,
+    content_json: dict[str, Any],
+    query: str,
+    query_terms: list[str],
+    force_source: bool,
+) -> list[dict[str, str]]:
+    tree = content_json.get("modora_tree") if isinstance(content_json, dict) else None
+    if not isinstance(tree, dict):
+        return []
+    evidence: list[dict[str, str]] = []
+    calls = 0
+    max_calls = 4
+
+    async def walk(node: dict[str, Any], path: str) -> None:
+        nonlocal calls
+        if len(evidence) >= 4 or calls >= max_calls:
+            return
+        title = node_title(node, path)
+        data = str(node.get("data") or "")
+        metadata = str(node.get("metadata") or "")
+        current_text = "\n".join(part for part in [title, metadata, data] if part.strip())
+        children = node_children(node)
+        if current_text.strip() and not children and (force_source or lexical_match(current_text, query_terms)):
+            relevant = True
+            if data.strip() and calls < max_calls:
+                calls += 1
+                checked = await ai.check_modora_node(f"{title}: {data[:1800]}", query)
+                relevant = checked if checked is not None else relevant
+            if relevant:
+                evidence.append({"path": path, "text": f"{path}\nmetadata: {metadata}\n{data}".strip()})
+        if not children:
+            return
+        selected_titles = fallback_select_child_titles(children, query_terms)
+        if calls < max_calls:
+            calls += 1
+            metadata_map = "\n".join(
+                f"{child_title}: {str(child.get('metadata') or child.get('data') or '')[:500]}"
+                for child_title, child in children.items()
+            )
+            ai_selected = await ai.select_modora_children(list(children.keys()), query, path, metadata_map)
+            if ai_selected is not None:
+                selected_titles = ai_selected
+        if not selected_titles and force_source:
+            selected_titles = list(children.keys())[:2]
+        for child_title in selected_titles[:3]:
+            child = children.get(child_title)
+            if child:
+                await walk(child, f"{path}--{child_title}" if path else child_title)
+
+    await walk(tree, node_title(tree, "Document Root"))
+    return evidence
+
+
+def node_children(node: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    children = node.get("children")
+    result: dict[str, dict[str, Any]] = {}
+    if isinstance(children, dict):
+        for key, child in children.items():
+            if isinstance(child, dict):
+                result[str(key)] = child
+    elif isinstance(children, list):
+        for index, child in enumerate(children):
+            if isinstance(child, dict):
+                result[node_title(child, f"node-{index + 1}")] = child
+    return result
+
+
+def node_title(node: dict[str, Any], fallback: str) -> str:
+    for key in ("title", "label", "name"):
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return fallback
+
+
+def fallback_select_child_titles(children: dict[str, dict[str, Any]], query_terms: list[str]) -> list[str]:
+    scored: list[tuple[int, str]] = []
+    for title, child in children.items():
+        haystack = " ".join(
+            str(part or "")
+            for part in [title, child.get("metadata"), child.get("data")]
+        ).lower()
+        score = sum(1 for term in query_terms if term in haystack)
+        if score:
+            scored.append((score, title))
+    scored.sort(reverse=True)
+    return [title for _, title in scored[:4]]
+
+
+def lexical_match(text: str, query_terms: list[str]) -> bool:
+    if not query_terms:
+        return True
+    haystack = text.lower()
+    return any(term in haystack for term in query_terms)
+
+
+def modora_context_text(content_json: dict[str, Any]) -> str:
+    tree = content_json.get("modora_tree") if isinstance(content_json, dict) else None
+    if not isinstance(tree, dict):
+        return ""
+    parts: list[str] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict) or len(" ".join(parts)) > 6000:
+            return
+        for key in ("title", "metadata", "data"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        children = node.get("children")
+        if isinstance(children, dict):
+            for child in children.values():
+                walk(child)
+        elif isinstance(children, list):
+            for child in children:
+                walk(child)
+
+    walk(tree)
+    return "\n".join(parts)
 
 
 def match_note(

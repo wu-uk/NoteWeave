@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import ast
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,13 +48,37 @@ class AIAssistService:
             return AIOutput(fallback, "fallback", error="remote response did not contain tags")
         return AIOutput({"tags": tags, "source": "remote"}, "remote")
 
-    async def classify_note(self, title: str, content: str, tags: list[str] | None = None) -> AIOutput:
+    async def classify_note(
+        self,
+        title: str,
+        content: str,
+        tags: list[str] | None = None,
+        course_candidates: list[dict[str, Any]] | None = None,
+    ) -> AIOutput:
         fallback = fallback_classification(title, content, tags or [])
+        candidates = [
+            {
+                "course_name": str(item.get("name") or item.get("course_name") or "").strip(),
+                "description": str(item.get("description") or "").strip(),
+                "tags": [str(tag).strip() for tag in item.get("tags", []) if str(tag).strip()]
+                if isinstance(item.get("tags"), list)
+                else [],
+            }
+            for item in (course_candidates or [])
+            if str(item.get("name") or item.get("course_name") or "").strip()
+        ][:20]
+        course_hint = ""
+        if candidates:
+            course_hint = (
+                "已有课程候选如下。请先判断笔记是否属于其中某一门课程；如果属于，course_name 必须原样使用候选里的 course_name，"
+                "不要创造近义或更泛化的新课程名。只有完全不属于任何已有课程时，才创建新的简短课程名。\n"
+                f"已有课程：{json.dumps(candidates, ensure_ascii=False)}\n\n"
+            )
         prompt = (
             "你是课程笔记归档助手。请根据笔记内容决定它最适合归入哪个课程和知识点，并生成摘要与标签。"
             "只返回 JSON 对象，字段为 course_name, node_title, summary, tags。"
             "course_name 使用简短课程名，node_title 使用具体知识点名，tags 为 3 到 8 个字符串。\n\n"
-            f"标题：{title}\n用户标签：{json.dumps(tags or [], ensure_ascii=False)}\n正文：{content}"
+            f"{course_hint}标题：{title}\n用户标签：{json.dumps(tags or [], ensure_ascii=False)}\n正文：{content}"
         )
         remote = await self._call_remote(prompt)
         if not remote:
@@ -82,6 +107,78 @@ class AIAssistService:
             return AIOutput(fallback, "fallback")
         return AIOutput({"answer": remote.strip(), "source": "remote"}, "remote")
 
+    async def generate_metadata(self, data: str, count: int) -> str:
+        fallback = ";".join(fallback_tags(data)[: max(1, count)] or ["Document"])
+        prompt = (
+            "### Instruction\n"
+            f"I now have some data in text. Please generate {count} nominal phrases as the keywords "
+            "to comprehensively summarize the data, separated by semicolon(;).\n\n"
+            "### Data\n"
+            f"{data}\n\n"
+            "### Note\n"
+            "You only need to output specified number of nominal phrases as keywords. "
+            "Do not give any extra explanations."
+        )
+        remote = await self._call_remote(prompt)
+        return normalize_metadata(remote, fallback, count)
+
+    async def integrate_metadata(self, metadata_items: list[str], count: int) -> str:
+        data = "\n".join(item for item in metadata_items if item)
+        fallback = ";".join(fallback_tags(data)[: max(1, count)] or ["Document"])
+        prompt = (
+            "### Instruction\n"
+            f"I now have a group of keywords. Please select from them or summarize based on them to output {count} "
+            "nominal phrases as the most comprehensive keywords, separated by semicolon(;).\n\n"
+            "### Data\n"
+            f"{data}\n\n"
+            "### Note\n"
+            "You only need to output specified number of nominal phrases as keywords. "
+            "Do not give any extra explanations."
+        )
+        remote = await self._call_remote(prompt)
+        return normalize_metadata(remote, fallback, count)
+
+    async def select_modora_children(self, keys: list[str], query: str, path: str, metadata_map: str) -> list[str] | None:
+        prompt = (
+            "### Instruction\n"
+            "I now have a query about the document, and another list contains the titles of some paragraphs in the document. "
+            "They have the same superior path and different metadata.\n"
+            "Please return titles that may contain potential or direct evidence in its corresponding paragraphs, as a list, "
+            "based on the analysis of the superior path and metadata map.\n"
+            "The returned list may be the input list itself, a subset of it, or empty.\n\n"
+            f"### Query\n{query}\n\n"
+            f"### List\n{keys}\n\n"
+            f"### Superior Path\n{path}\n\n"
+            f"### Metadata Map\n{metadata_map}\n\n"
+            "### Note\n"
+            "You don't need to output any additional explanations or annotations. You only need to output a list of selected titles."
+        )
+        remote = await self._call_remote(prompt)
+        if remote is None:
+            return None
+        return parse_list_response(remote, keys)
+
+    async def check_modora_node(self, data: str, query: str) -> bool | None:
+        prompt = (
+            "### Instruction\n"
+            "Now I have a query and some text. Please judge whether the text contains evidence pieces or cues about the query.\n"
+            "Some cues may not directly provide the answer but is important for reasoning.\n"
+            "If yes, output T, otherwise output F.\n\n"
+            f"### Query\n{query}\n\n"
+            f"### Text\n{data}\n\n"
+            "### Note\n"
+            "You only need to output T or F, without any other content."
+        )
+        remote = await self._call_remote(prompt)
+        if remote is None:
+            return None
+        text = remote.strip().upper()
+        if text.startswith("T"):
+            return True
+        if text.startswith("F"):
+            return False
+        return None
+
     async def _call_remote(self, prompt: str) -> str | None:
         if not self.settings.enable_ai:
             return None
@@ -100,7 +197,8 @@ class AIAssistService:
             "temperature": 0.2,
         }
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            timeout = httpx.Timeout(self.settings.request_timeout_seconds)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
@@ -166,6 +264,29 @@ def parse_object_response(value: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def parse_list_response(value: str, allowed: list[str]) -> list[str]:
+    text = value.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    parsed: Any
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            parsed = []
+    if not isinstance(parsed, list):
+        return []
+    allowed_set = set(allowed)
+    return [str(item).strip() for item in parsed if str(item).strip() in allowed_set]
+
+
 def fallback_classification(title: str, content: str, tags: list[str]) -> dict[str, Any]:
     all_tags = [*tags, *fallback_tags(f"{title} {content}")]
     deduped: list[str] = []
@@ -228,3 +349,12 @@ def fallback_answer(question: str, contexts: list[dict[str, Any]]) -> dict[str, 
         "answer": f"根据已检索到的笔记片段，建议先查看：{preview}",
         "source": "fallback",
     }
+
+
+def normalize_metadata(value: str | None, fallback: str, count: int) -> str:
+    if not value:
+        return fallback
+    parts = [part.strip() for part in value.replace("\n", ";").split(";") if part.strip()]
+    if not parts:
+        return fallback
+    return ";".join(parts[: max(1, count)])

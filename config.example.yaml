@@ -9,3 +9,15 @@ ai:
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   api_key: replace-with-your-api-key
   chat_model: qwen-plus
+  request_timeout_seconds: 10
+
+paddle_ocr:
+  enabled: false
+  job_url: https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
+  token: replace-with-your-paddleocr-token
+  model: PP-StructureV3
+  poll_interval_seconds: 5
+  timeout_seconds: 300
+  use_doc_orientation_classify: false
+  use_doc_unwarping: false
+  use_chart_recognition: false

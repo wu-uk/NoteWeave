@@ -53,8 +53,9 @@ export type KnowledgeNode = {
 };
 
 export type TreeResponse = {
-  course_id: number;
-  root: KnowledgeNode | null;
+  tree: KnowledgeNode | null;
+  nodes: KnowledgeNode[];
+  edges: { source: number; target: number }[];
 };
 
 export type Note = {
@@ -63,6 +64,7 @@ export type Note = {
   node_id: number | null;
   node_path?: string | null;
   title: string;
+  content_json?: Record<string, unknown>;
   content_text: string;
   summary?: string;
   visibility: "private" | "shared";
@@ -76,6 +78,7 @@ export type Note = {
   like_reaction_id?: number | null;
   is_favorite?: boolean;
   favorite_reaction_id?: number | null;
+  attachments?: Attachment[];
   updated_at: string;
 };
 
@@ -192,6 +195,7 @@ export type NoteIngestResult = {
 
 export type NoteImportResult = NoteIngestResult & {
   attachment: Attachment;
+  source_pdf_attachment?: Attachment | null;
   document: {
     file_name: string;
     content_type: string;

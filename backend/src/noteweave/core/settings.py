@@ -17,6 +17,16 @@ class Settings:
     model_base_url: str | None = None
     model_api_key: str | None = None
     chat_model: str | None = None
+    request_timeout_seconds: float = 10.0
+    paddle_ocr_enabled: bool = False
+    paddle_ocr_job_url: str | None = None
+    paddle_ocr_token: str | None = None
+    paddle_ocr_model: str = "PP-StructureV3"
+    paddle_ocr_poll_interval_seconds: float = 5.0
+    paddle_ocr_timeout_seconds: float = 300.0
+    paddle_ocr_use_doc_orientation_classify: bool = False
+    paddle_ocr_use_doc_unwarping: bool = False
+    paddle_ocr_use_chart_recognition: bool = False
 
     @staticmethod
     def load() -> "Settings":
@@ -49,6 +59,15 @@ class Settings:
                 return default
             return raw.strip().lower() in {"1", "true", "yes", "on"}
 
+        def pick_float(key: str, default: float, *config_path: str) -> float:
+            raw = pick(key, None, *config_path)
+            if raw is None:
+                return default
+            try:
+                return float(raw)
+            except ValueError:
+                return default
+
         def resolve_backend_path(raw: str) -> str:
             p = Path(raw).expanduser()
             if not p.is_absolute():
@@ -71,6 +90,45 @@ class Settings:
             model_base_url=pick("MODEL_BASE_URL", None, "ai", "base_url"),
             model_api_key=pick("MODEL_API_KEY", None, "ai", "api_key"),
             chat_model=pick("CHAT_MODEL", None, "ai", "chat_model"),
+            request_timeout_seconds=max(
+                1.0,
+                pick_float("REQUEST_TIMEOUT_SECONDS", 10.0, "ai", "request_timeout_seconds"),
+            ),
+            paddle_ocr_enabled=pick_bool("PADDLE_OCR_ENABLED", False, "paddle_ocr", "enabled"),
+            paddle_ocr_job_url=pick(
+                "PADDLE_OCR_JOB_URL",
+                None,
+                "paddle_ocr",
+                "job_url",
+            ),
+            paddle_ocr_token=pick("PADDLE_OCR_TOKEN", None, "paddle_ocr", "token"),
+            paddle_ocr_model=pick("PADDLE_OCR_MODEL", "PP-StructureV3", "paddle_ocr", "model") or "PP-StructureV3",
+            paddle_ocr_poll_interval_seconds=max(
+                0.5,
+                pick_float("PADDLE_OCR_POLL_INTERVAL_SECONDS", 5.0, "paddle_ocr", "poll_interval_seconds"),
+            ),
+            paddle_ocr_timeout_seconds=max(
+                5.0,
+                pick_float("PADDLE_OCR_TIMEOUT_SECONDS", 300.0, "paddle_ocr", "timeout_seconds"),
+            ),
+            paddle_ocr_use_doc_orientation_classify=pick_bool(
+                "PADDLE_OCR_USE_DOC_ORIENTATION_CLASSIFY",
+                False,
+                "paddle_ocr",
+                "use_doc_orientation_classify",
+            ),
+            paddle_ocr_use_doc_unwarping=pick_bool(
+                "PADDLE_OCR_USE_DOC_UNWARPING",
+                False,
+                "paddle_ocr",
+                "use_doc_unwarping",
+            ),
+            paddle_ocr_use_chart_recognition=pick_bool(
+                "PADDLE_OCR_USE_CHART_RECOGNITION",
+                False,
+                "paddle_ocr",
+                "use_chart_recognition",
+            ),
         )
 
 

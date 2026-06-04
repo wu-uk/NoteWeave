@@ -95,6 +95,7 @@ class NoteImportRequest(BaseModel):
 class NoteAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     course_id: int | None = None
+    note_ids: list[int] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=6, ge=1, le=12)
 
 

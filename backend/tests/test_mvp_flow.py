@@ -8,7 +8,9 @@ from io import BytesIO
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from noteweave.api.app import create_app
+from noteweave.api.app import create_app, prefer_existing_course
+from noteweave.core.database import Database, dumps
+from noteweave.core.modora_adapter import CCTreeNode, extract_paddle_document, generate_metadata, ocr_components, paddle_ocr_markdown
 from noteweave.core.settings import Settings
 
 
@@ -57,6 +59,130 @@ def make_pdf_bytes(text: str) -> bytes:
         f"trailer\n<< /Root 1 0 R /Size {len(objects) + 1} >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
     )
     return bytes(pdf)
+
+
+@pytest.mark.anyio
+async def test_remote_paddle_ocr_markdown_uses_config(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, payload=None, text: str = ""):
+            self._payload = payload or {}
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers=None, data=None, files=None):
+            calls.append({"method": "post", "url": url, "headers": headers, "data": data, "files": files})
+            return FakeResponse({"data": {"jobId": "job-1"}})
+
+        async def get(self, url, headers=None):
+            calls.append({"method": "get", "url": url, "headers": headers})
+            if url.endswith("/job-1"):
+                return FakeResponse({"data": {"state": "done", "resultUrl": {"jsonUrl": "https://example.test/result.jsonl"}}})
+            return FakeResponse(
+                text='{"result":{"layoutParsingResults":[{"markdown":{"text":"# OCR Title\\n\\nOCR body text"}}]}}\n'
+            )
+
+    monkeypatch.setattr("noteweave.core.modora_adapter.httpx.AsyncClient", FakeAsyncClient)
+    settings = Settings(
+        paddle_ocr_enabled=True,
+        paddle_ocr_job_url="https://paddle.example/api/v2/ocr/jobs",
+        paddle_ocr_token="token-1",
+        paddle_ocr_model="PP-StructureV3",
+        paddle_ocr_poll_interval_seconds=0.5,
+    )
+
+    markdown = await paddle_ocr_markdown("sample.pdf", "application/pdf", b"%PDF", settings)
+
+    assert markdown == "# OCR Title\n\nOCR body text"
+    assert calls[0]["url"] == "https://paddle.example/api/v2/ocr/jobs"
+    assert calls[0]["headers"] == {"Authorization": "bearer token-1"}
+    assert calls[0]["data"]["model"] == "PP-StructureV3"
+
+
+def test_paddle_pruned_result_is_converted_like_modora_structure_analyzer():
+    document = extract_paddle_document(
+        '{"result":{"layoutParsingResults":[{"prunedResult":{"parsing_res_list":['
+        '{"block_label":"paragraph_title","block_content":"Chapter","block_bbox":[0,0,200,40],"block_id":0},'
+        '{"block_label":"text","block_content":"Body text","block_bbox":[0,50,200,90],"block_id":1}'
+        ']},"markdown":{"text":"## Chapter\\n\\nBody text"}}]}}\n'
+    )
+
+    components = ocr_components(document.blocks, "sample.pdf")
+
+    assert document.markdown == "## Chapter\n\nBody text"
+    assert document.blocks[0].label == "paragraph_title"
+    assert document.blocks[0].bbox == [0.0, 0.0, 100.0, 20.0]
+    assert components[0].title == "Chapter"
+    assert components[0].data == "Chapter\n\nBody text"
+
+
+@pytest.mark.anyio
+async def test_modora_non_text_metadata_fallback_does_not_copy_raw_data():
+    class FakeAi:
+        async def generate_metadata(self, data: str, count: int) -> str:
+            return "text-summary"
+
+        async def integrate_metadata(self, metadata_items: list[str], count: int) -> str:
+            return ";".join(item for item in metadata_items if item)
+
+    raw_table = "姓名 分数\nAlice 98\nBob 87"
+    root = CCTreeNode(
+        type="root",
+        children={
+            "Score table": CCTreeNode(type="table", data=raw_table),
+        },
+    )
+
+    await generate_metadata(root, FakeAi())
+
+    table = root.children["Score table"]
+    assert table.metadata
+    assert table.metadata != raw_table
+
+
+def test_prefer_existing_course_reuses_matching_user_course(tmp_path):
+    db = Database(str(tmp_path / "noteweave.sqlite3"))
+    ts = "2026-06-02T00:00:00+00:00"
+    user_id = db.execute(
+        "INSERT INTO users (username, password_hash, display_name, system_role, created_at) VALUES (?, ?, ?, 'user', ?)",
+        ("alice", "hash", "Alice", ts),
+    )
+    course_id = db.execute(
+        """
+        INSERT INTO courses (name, description, semester, tags, invite_code, created_by, created_at, updated_at)
+        VALUES ('算法设计与分析', '数据结构、排序、区间查询和复杂度分析', '', ?, 'invite-1', ?, ?, ?)
+        """,
+        (dumps(["排序", "区间查询", "数据结构"]), user_id, ts, ts),
+    )
+    db.execute("INSERT INTO course_members (course_id, user_id, role, joined_at) VALUES (?, ?, 'maintainer', ?)", (course_id, user_id, ts))
+
+    adjusted = prefer_existing_course(
+        db,
+        user_id,
+        {"course_name": "计算机科学", "node_title": "静态区间排名", "tags": ["Merge Sort Tree", "树状数组"]},
+        "静态区间排名",
+        "离线算法树状数组，在线算法 Merge Sort Tree，区间查询复杂度分析。",
+        [],
+    )
+
+    assert adjusted["course_name"] == "算法设计与分析"
+    assert adjusted["matched_existing_course_id"] == course_id
 
 
 @pytest.mark.anyio
@@ -1210,7 +1336,9 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert imported["note"]["title"] == "dijkstra"
         assert "non-negative graph edges" in imported["note"]["content_text"]
         assert imported["classification"]["course_name"]
-        assert imported["document"]["parser"] == "markdown"
+        assert imported["document"]["parser"] == "modora-markdown-heading"
+        assert imported["document"]["tree_type"] == "modora-cctree"
+        assert imported["note"]["content_json"]["modora_tree"]["type"] == "root"
         assert imported["attachment"]["file_name"] == "dijkstra.md"
 
         docx_res = await client.post(
@@ -1225,8 +1353,9 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
             },
         )
         assert docx_res.status_code == 200
-        assert docx_res.json()["document"]["parser"] == "docx-xml"
+        assert docx_res.json()["document"]["parser"] == "modora-doc-to-pdf"
         assert "Quick sort uses partitioning." in docx_res.json()["note"]["content_text"]
+        assert docx_res.json()["source_pdf_attachment"]["content_type"] == "application/pdf"
         private_note_id = docx_res.json()["note"]["id"]
 
         pdf_res = await client.post(
@@ -1242,8 +1371,9 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         )
         assert pdf_res.status_code == 200
         pdf_imported = pdf_res.json()
-        assert pdf_imported["document"]["parser"] == "pypdf"
+        assert pdf_imported["document"]["parser"] == "modora-pdf"
         assert "PDF graph shortest path note" in pdf_imported["note"]["content_text"]
+        assert pdf_imported["note"]["content_json"]["modora_tree"]["children"]
         assert pdf_imported["attachment"]["file_name"] == "shortest-path.pdf"
 
         qa_res = await client.post(
@@ -1256,6 +1386,14 @@ async def test_document_import_creates_classified_notes_and_qa_context(tmp_path)
         assert qa["source"] == "fallback"
         assert qa["contexts"]
         assert any("Dijkstra" in context["title"] or "Dijkstra" in context["content"] for context in qa["contexts"])
+
+        scoped_qa_res = await client.post(
+            "/api/notes/ask",
+            headers=headers,
+            json={"question": "Dijkstra graph edges", "note_ids": [private_note_id], "limit": 5},
+        )
+        assert scoped_qa_res.status_code == 200
+        assert all(context["source_id"] == private_note_id for context in scoped_qa_res.json()["contexts"])
 
         bob_res = await client.post(
             "/api/auth/register",
@@ -1376,7 +1514,7 @@ async def test_real_ai_api_flows_through_note_endpoints(tmp_path):
         )
         assert import_res.status_code == 200
         imported = import_res.json()
-        assert imported["document"]["parser"] == "markdown"
+        assert imported["document"]["parser"] == "modora-markdown-heading"
         assert imported["classification"]["source"] == "remote"
         assert imported["classification"]["course_name"]
         assert imported["classification"]["node_title"]
